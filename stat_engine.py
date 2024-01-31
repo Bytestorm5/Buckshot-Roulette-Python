@@ -1,7 +1,7 @@
 from cli_game import Board, Items
 import itertools
 from functools import lru_cache
-from sympy import symbols, print_latex, latex
+from tqdm import tqdm
 
 class StatEngine():
     def __init__(self, playing_as):
@@ -12,31 +12,40 @@ class StatEngine():
         assert board.current_turn == self.me
         
         X, N = board.shotgun_info()
-        moves = board.moves()
         items_available = board.p1_items if self.me == 0 else board.p2_items
+        
+        # ban = 'saw'
+        # while items_available[ban] > 0:
+        #     items_available[ban] = 0
+        #     replacement = random.choice(board.POSSIBLE_ITEMS)
+        #     items_available[replacement] += 1
+        
+        moves = board.moves()      
         
         if 'cigarettes' in moves and board.charges[self.me] < board.max_charges:
             return 'cigarettes'
         elif 'cigarettes' in moves:
-            moves.remove('cigarettes')
+            moves.remove('cigarettes')      
         
         # We have to say == True/False because it could also be None
         if board.chamber_public == True:
             if 'handcuffs' in moves:
-                return 'handcuffs'
+                hc_val = self.evaluate_action(('handcuffs'), X-1, N-1, tuple(items_available.values()))
+                if hc_val > 0:
+                    return 'handcuffs'
             if 'saw' in moves:
                 return 'saw'
             return 'op'
         if board.chamber_public == False:
-            return 'self'
+            return 'self'       
         
         if X == N:
             return 'op'
         if X == 0:
             return 'self'
-            
-        if len(moves) == 2:
-            return 'op'
+        
+        # if len(moves) == 2:
+        #     return 'op'
 
         action_pool = ['beer'] * items_available['beer']
         # Single use items
@@ -82,41 +91,41 @@ class StatEngine():
         
         return ex_val - penalty
     
-    def seq_eval(self, sequence: list[bool], X_val, N_val):
-        if len(sequence) > N_val:
-            return 0.0
-        if sum([1 if x else 0 for x in sequence]) > X_val:
-            return 0.0
-        if X_val > N_val:
-            return 0.0
+    # def seq_eval(self, sequence: list[bool], X_val, N_val):
+    #     if len(sequence) > N_val:
+    #         return 0.0
+    #     if sum([1 if x else 0 for x in sequence]) > X_val:
+    #         return 0.0
+    #     if X_val > N_val:
+    #         return 0.0
         
-        X, N = symbols('X N')
+    #     X, N = symbols('X N')
 
-        def live(X, N):
-            return X / N
+    #     def live(X, N):
+    #         return X / N
 
-        def dead(X, N):
-            return (N - X) / N
+    #     def dead(X, N):
+    #         return (N - X) / N
     
-        live_fires = 0
-        fires = 0
-        total_prob = None
-        raw_seq = ""
-        for s in sequence:
-            if s:
-                eq = live(X-live_fires, N-fires)
-                live_fires += 1
-            else:
-                eq = dead(X-live_fires, N-fires)
-            fires += 1
-            raw_seq += latex(eq) + " * "
+    #     live_fires = 0
+    #     fires = 0
+    #     total_prob = None
+    #     raw_seq = ""
+    #     for s in sequence:
+    #         if s:
+    #             eq = live(X-live_fires, N-fires)
+    #             live_fires += 1
+    #         else:
+    #             eq = dead(X-live_fires, N-fires)
+    #         fires += 1
+    #         raw_seq += latex(eq) + " * "
 
-            if total_prob == None:
-                total_prob = eq
-            else:
-                total_prob = total_prob * eq
+    #         if total_prob == None:
+    #             total_prob = eq
+    #         else:
+    #             total_prob = total_prob * eq
 
-        return total_prob.subs({X: X_val, N: N_val}).evalf()
+    #     return total_prob.subs({X: X_val, N: N_val}).evalf()
           
     @lru_cache(1024)
     def expected_value(self, action, X, N):
@@ -135,6 +144,9 @@ class StatEngine():
                 return 1
         elif a == 'handcuffs':
             # Handcuffs always come last
+            if N < 2:
+                return self.expected_value(action[1:], X, N)
+            
             return 2 * self.expected_value(action[1:], X, N)
         elif a == 'saw':
             return 2 * self.expected_value(action[1:], X, N)
@@ -180,14 +192,6 @@ class DealerEngine():
             elif item == 'saw' and self.known_shell == True:
                 return 'saw'
         
-        # This is  kinda stupid but it affects the targeting so
-        if 'saw' in item_array and board._active_items['saw'] == 0 and self.known_shell != False:
-            decision = random.randint(0, 1)
-            if decision == 0:
-                self.target = 'self'
-            else:
-                self.target = 'op'
-        
         self.known_shell = None
         if self.target == "":
             return random.choice(['op', 'self'])
@@ -197,30 +201,48 @@ class DealerEngine():
               
 
 if __name__ == "__main__":
-    lives = 5000
-    lives_0 = [lives]
-    lives_1 = [lives]
-    board = Board(lives)
-    engine0 = DealerEngine(0)
-    engine1 = StatEngine(1)
-    while board.winner() == None:
-        live = sum([1 if x else 0 for x in board._shotgun])
-        print(f"{live} Live, {len(board._shotgun) - live} Blank.")
-        print(f"Charges: {board.charges}")
-        if board.current_turn == 0:
-            move = engine0.best_move(board)
-            print("Bot 0 Used:", move)
-            print("Result:", board.make_move(move))
-            print("------------------------------")
-        else:
-            move = engine1.best_move(board)
-            print("Bot 1 Used:", move)
-            print("Result:", board.make_move(move))
-            print("------------------------------")
-        lives_0.append(board.charges[0])
-        lives_1.append(board.charges[1])
-    import matplotlib.pyplot as plt
-    plt.plot(lives_0, label="Player 0 Lives")
-    plt.plot(lives_1, label="Player 1 Lives")
-    plt.legend()
-    plt.show()
+    random.seed(12345)
+    lives = 5
+    wins = []
+    
+    for _ in tqdm(list(range(10000))):
+        board = Board(lives)
+        engine0 = StatEngine(0)
+        engine1 = DealerEngine(1)
+        while board.winner() == None:
+            #live = sum([1 if x else 0 for x in board._shotgun])
+            # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
+            # print(f"Charges: {board.charges}")
+            if board.current_turn == 0:
+                move = engine0.best_move(board)
+                board.make_move(move)
+                # print("Bot 0 Used:", move)
+                # print("Result:", board.make_move(move))
+                # print("------------------------------")
+            else:
+                move = engine1.best_move(board)
+                board.make_move(move)
+        wins.append(1 - board.winner())
+    print(sum(wins) / len(wins))
+    
+    wins = []
+    random.seed(12345)
+    for _ in tqdm(list(range(10000))):
+        board = Board(lives)
+        engine0 = DealerEngine(0)
+        engine1 = StatEngine(1)
+        while board.winner() == None:
+            #live = sum([1 if x else 0 for x in board._shotgun])
+            # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
+            # print(f"Charges: {board.charges}")
+            if board.current_turn == 0:
+                move = engine0.best_move(board)
+                board.make_move(move)
+                # print("Bot 0 Used:", move)
+                # print("Result:", board.make_move(move))
+                # print("------------------------------")
+            else:
+                move = engine1.best_move(board)
+                board.make_move(move)
+        wins.append(board.winner())
+    print(sum(wins) / len(wins))

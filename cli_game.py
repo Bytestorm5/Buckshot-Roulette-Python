@@ -54,9 +54,9 @@ class Board:
     def winner(self) -> int | None:
         # Ties are impossible so we don't account for that
         if self.charges[0] < 1:
-            return 0
-        elif self.charges[1] < 1:
             return 1
+        elif self.charges[1] < 1:
+            return 0
         else:
             return None        
         

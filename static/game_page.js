@@ -89,7 +89,12 @@ function fetchData() {
         }   
         
     }
-  
+    var hide = true
+    function toggleHide() {
+        hide = !hide
+        update()
+    }
+
     function constructItemArray(obj) {
         let result = new Array(8).fill(undefined);
         let index = 0;
@@ -116,10 +121,12 @@ function fetchData() {
      - Saw: ${data.active_items.saw > 0}<br>
     Known Shell: ${data.known_shell}<br>
     Last Action: ${data.last_action}<br>
+    Ratio: ${data.shotgun_info[0]} / ${data.shotgun_info[1]}<br>
     <button type="button" onclick="unlockEndpoint()">Unlock</button>
+    <button type="button" onclick="toggleHide()">Toggle Hide</button>
     `
 
-    if (data.active_items.saw > 0) {
+    if (data.active_items.saw <= 0) {
         const shotgun_img = document.querySelector('#shotgun_img');
         shotgun_img.src = "/static/images/shotgun.png"
     }
@@ -156,7 +163,7 @@ function fetchData() {
     aspect_ratio = 2.67391304
     shotgun_info = document.getElementsByClassName('shotgun_info')[0]
     shotgun_info.innerHTML = ""
-    for (let i = 0; i < data.shotgun.length; i++) {
+    for (let i = 0; i < data.shotgun.length && !hide; i++) {
         if (data.shotgun[i]) {
             shotgun_info.innerHTML += `<img src="/static/images/bullet_live.png" height="${bullet_height}px" width="${bullet_height * aspect_ratio}">`
         }

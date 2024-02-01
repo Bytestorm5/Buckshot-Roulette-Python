@@ -19,7 +19,7 @@ def act():
     action = request.args.get("action")
     if not do_action(action):
         return str(False)
-    while BOARD.current_turn == 1:
+    while BOARD.current_turn == 1 and BOARD.winner() == None:
         do_action(OPPONENT.best_move(BOARD))
     return str(True)
 
@@ -65,7 +65,7 @@ def do_action(action):
     print("------------ LOCK -------------")   
     last_action = (BOARD.current_turn, action, BOARD.make_move(action)) 
     turn_id += 1
-    time.sleep(10)
+    time.sleep(6)
     while update_lock:
         time.sleep(0.5)
     return True

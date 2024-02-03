@@ -1,11 +1,11 @@
 from flask import Flask, render_template, jsonify, request
 from cli_game import Board
-from stat_engine import DealerEngine
+from stat_engine import DealerEngine, StatEngine
 import time
 
 app = Flask(__name__)
 BOARD = Board(5)
-OPPONENT = DealerEngine(1)
+OPPONENT = StatEngine(1)
 turn_id = 0
 last_action = (-1, "")
 update_lock = False

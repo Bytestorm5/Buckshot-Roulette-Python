@@ -133,7 +133,8 @@ class StatEngine():
             return 0
         if len(action) == 0:
             return X / N
-
+        if isinstance(action, str):
+            action = tuple([action])
         a = action[0]
         if a == 'magnifying_glass':
             see_live = 1
@@ -197,52 +198,61 @@ class DealerEngine():
             return random.choice(['op', 'self'])
         else:
             return self.target
-        
-              
+
+class RandomEngine():
+    def __init__(self, _):
+        pass
+    
+    def best_move(self, board: Board):
+        return random.choice(board.moves())
 
 if __name__ == "__main__":
-    random.seed(12345)
-    lives = 5
-    wins = []
-    
-    for _ in tqdm(list(range(10000))):
-        board = Board(lives)
-        engine0 = StatEngine(0)
-        engine1 = DealerEngine(1)
-        while board.winner() == None:
-            #live = sum([1 if x else 0 for x in board._shotgun])
-            # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
-            # print(f"Charges: {board.charges}")
-            if board.current_turn == 0:
-                move = engine0.best_move(board)
-                board.make_move(move)
-                # print("Bot 0 Used:", move)
-                # print("Result:", board.make_move(move))
-                # print("------------------------------")
-            else:
-                move = engine1.best_move(board)
-                board.make_move(move)
-        wins.append(1 - board.winner())
-    print(sum(wins) / len(wins))
-    
-    wins = []
-    random.seed(12345)
-    for _ in tqdm(list(range(10000))):
-        board = Board(lives)
-        engine0 = DealerEngine(0)
-        engine1 = StatEngine(1)
-        while board.winner() == None:
-            #live = sum([1 if x else 0 for x in board._shotgun])
-            # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
-            # print(f"Charges: {board.charges}")
-            if board.current_turn == 0:
-                move = engine0.best_move(board)
-                board.make_move(move)
-                # print("Bot 0 Used:", move)
-                # print("Result:", board.make_move(move))
-                # print("------------------------------")
-            else:
-                move = engine1.best_move(board)
-                board.make_move(move)
-        wins.append(board.winner())
-    print(sum(wins) / len(wins))
+    for lives in range(1, 31):
+        random.seed(12345)
+        #lives = 5
+        #print(lives)
+        wins = []
+        
+        for _ in list(range(10000)):
+            board = Board(lives)
+            engine0 = RandomEngine(0)
+            engine1 = RandomEngine(1)
+            while board.winner() == None:
+                #live = sum([1 if x else 0 for x in board._shotgun])
+                # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
+                # print(f"Charges: {board.charges}")
+                if board.current_turn == 0:
+                    move = engine0.best_move(board)
+                    board.make_move(move)
+                    # print("Bot 0 Used:", move)
+                    # print("Result:", board.make_move(move))
+                    # print("------------------------------")
+                else:
+                    move = engine1.best_move(board)
+                    board.make_move(move)
+            wins.append(1 - board.winner())
+        g1 = sum(wins) / len(wins)
+        
+        wins = []
+        random.seed(12345)
+        for _ in list(range(10000)):
+            board = Board(lives)
+            engine0 = RandomEngine(0)
+            engine1 = RandomEngine(1)
+            while board.winner() == None:
+                #live = sum([1 if x else 0 for x in board._shotgun])
+                # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
+                # print(f"Charges: {board.charges}")
+                if board.current_turn == 0:
+                    move = engine0.best_move(board)
+                    board.make_move(move)
+                    # print("Bot 0 Used:", move)
+                    # print("Result:", board.make_move(move))
+                    # print("------------------------------")
+                else:
+                    move = engine1.best_move(board)
+                    board.make_move(move)
+            wins.append(board.winner())
+        g2 = sum(wins) / len(wins)
+        print(f"{lives},{g1},{g2}")
+        

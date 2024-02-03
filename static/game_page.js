@@ -189,7 +189,7 @@ function fetchData() {
         }
         op_slots[i].innerHTML = ""
         if (op_items[i] != undefined) {
-            op_slots[i].innerHTML = `<img src="/static/images/${p_items[i]}.png" height="100%" width="100%">`
+            op_slots[i].innerHTML = `<img src="/static/images/${op_items[i]}.png" height="100%" width="100%">`
         }
     }
 

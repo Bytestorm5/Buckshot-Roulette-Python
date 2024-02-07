@@ -29,17 +29,14 @@ class Board:
         self._skip_next = False
         
         self.chamber_public = None
-        self._item_drop = 3
 
     def new_rounds(self, drop_items = True):
         total = random.randint(2, 8)
         live = random.randint(1, total-1)
         self._shotgun = random.choice(generate_binary_numbers(live, total))
         if drop_items:
-            self.give_items(self._item_drop)
-            self._item_drop = (self._item_drop - 1) % 3
-            if self._item_drop == 0:
-                self._item_drop = 3
+            self.give_items(random.randint(1, 4))
+            
     
     def give_items(self, item_count):
         for player in [self.p1_items, self.p2_items]:
@@ -71,6 +68,8 @@ class Board:
         def switch():
             self._active_items['saw'] = 0
             if self._active_items['handcuffs'] > 0.5:
+                if not at_opponent and not is_hit:
+                    return
                 self._active_items['handcuffs'] -= 0.5
             
             if self._skip_next:

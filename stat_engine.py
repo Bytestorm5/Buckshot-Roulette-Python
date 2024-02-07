@@ -14,38 +14,18 @@ class StatEngine():
         X, N = board.shotgun_info()
         items_available = board.p1_items if self.me == 0 else board.p2_items
         
-        # ban = 'saw'
-        # while items_available[ban] > 0:
-        #     items_available[ban] = 0
-        #     replacement = random.choice(board.POSSIBLE_ITEMS)
-        #     items_available[replacement] += 1
-        
         moves = board.moves()      
         
         if 'cigarettes' in moves and board.charges[self.me] < board.max_charges:
             return 'cigarettes'
         elif 'cigarettes' in moves:
-            moves.remove('cigarettes')      
-        
-        # We have to say == True/False because it could also be None
-        if board.chamber_public == True:
-            if 'handcuffs' in moves:
-                hc_val = self.evaluate_action(('handcuffs'), X-1, N-1, tuple(items_available.values()))
-                if hc_val > 0:
-                    return 'handcuffs'
-            if 'saw' in moves:
-                return 'saw'
-            return 'op'
-        if board.chamber_public == False:
-            return 'self'       
-        
-        if X == N:
-            return 'op'
-        if X == 0:
+            moves.remove('cigarettes')
+
+        if board.chamber_public == False or X == 0:
             return 'self'
-        
-        # if len(moves) == 2:
-        #     return 'op'
+        if board.chamber_public != None and 'magnifying_glass' in moves:
+            moves.remove('magnifying_glass')
+            
 
         action_pool = ['beer'] * items_available['beer']
         # Single use items
@@ -67,7 +47,8 @@ class StatEngine():
                         valid = False
                         break
                 if valid:
-                    actions.add(c)
+                    lc = list(c)
+                    actions.add(tuple(c))
         actions = sorted(list(actions), key=lambda x: self.evaluate_action(x, X, N, tuple(items_available.values())))
         best_action = actions[-1]
         return best_action[0] if len(best_action) > 0 else 'op'
@@ -91,42 +72,6 @@ class StatEngine():
         
         return ex_val - penalty
     
-    # def seq_eval(self, sequence: list[bool], X_val, N_val):
-    #     if len(sequence) > N_val:
-    #         return 0.0
-    #     if sum([1 if x else 0 for x in sequence]) > X_val:
-    #         return 0.0
-    #     if X_val > N_val:
-    #         return 0.0
-        
-    #     X, N = symbols('X N')
-
-    #     def live(X, N):
-    #         return X / N
-
-    #     def dead(X, N):
-    #         return (N - X) / N
-    
-    #     live_fires = 0
-    #     fires = 0
-    #     total_prob = None
-    #     raw_seq = ""
-    #     for s in sequence:
-    #         if s:
-    #             eq = live(X-live_fires, N-fires)
-    #             live_fires += 1
-    #         else:
-    #             eq = dead(X-live_fires, N-fires)
-    #         fires += 1
-    #         raw_seq += latex(eq) + " * "
-
-    #         if total_prob == None:
-    #             total_prob = eq
-    #         else:
-    #             total_prob = total_prob * eq
-
-    #     return total_prob.subs({X: X_val, N: N_val}).evalf()
-          
     @lru_cache(1024)
     def expected_value(self, action, X, N):
         if X <= 0 or N <= 0:
@@ -157,7 +102,7 @@ class StatEngine():
                 was_blank = self.expected_value(action[1:], X, N-1)
                 return (was_live * X / N) + (was_blank * (N - X) / N)
             else:
-                return was_live
+                return was_live     
 
 import random
 class DealerEngine():
@@ -206,53 +151,43 @@ class RandomEngine():
     def best_move(self, board: Board):
         return random.choice(board.moves())
 
+from tqdm import tqdm
+import time
+
+def run_round(board: Board, engine0, engine1):
+    while board.winner() == None:
+        if board.current_turn == 0:
+            move = engine0.best_move(board)
+            board.make_move(move)
+        else:
+            move = engine1.best_move(board)
+            board.make_move(move)
+    return board.winner()
+
+def run_batch(engine0, engine1):
+    for _ in range(3):
+        board = Board(random.randint(2, 4))
+        w = run_round(board, engine0, engine1)
+        if w != 0:
+            return 1
+    return 0
+
 if __name__ == "__main__":
-    for lives in range(1, 31):
-        random.seed(12345)
-        #lives = 5
-        #print(lives)
-        wins = []
-        
-        for _ in list(range(10000)):
-            board = Board(lives)
-            engine0 = RandomEngine(0)
-            engine1 = RandomEngine(1)
-            while board.winner() == None:
-                #live = sum([1 if x else 0 for x in board._shotgun])
-                # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
-                # print(f"Charges: {board.charges}")
-                if board.current_turn == 0:
-                    move = engine0.best_move(board)
-                    board.make_move(move)
-                    # print("Bot 0 Used:", move)
-                    # print("Result:", board.make_move(move))
-                    # print("------------------------------")
-                else:
-                    move = engine1.best_move(board)
-                    board.make_move(move)
-            wins.append(1 - board.winner())
-        g1 = sum(wins) / len(wins)
-        
-        wins = []
-        random.seed(12345)
-        for _ in list(range(10000)):
-            board = Board(lives)
-            engine0 = RandomEngine(0)
-            engine1 = RandomEngine(1)
-            while board.winner() == None:
-                #live = sum([1 if x else 0 for x in board._shotgun])
-                # print(f"{live} Live, {len(board._shotgun) - live} Blank.")
-                # print(f"Charges: {board.charges}")
-                if board.current_turn == 0:
-                    move = engine0.best_move(board)
-                    board.make_move(move)
-                    # print("Bot 0 Used:", move)
-                    # print("Result:", board.make_move(move))
-                    # print("------------------------------")
-                else:
-                    move = engine1.best_move(board)
-                    board.make_move(move)
-            wins.append(board.winner())
-        g2 = sum(wins) / len(wins)
-        print(f"{lives},{g1},{g2}")
+    
+    engine0 = StatEngine(0)
+    engine1 = DealerEngine(1)
+    random.seed(12345)
+    wins = []
+    for _ in range(10000):            
+        wins.append(1 - run_batch(engine0, engine1))
+    g1 = sum(wins) / len(wins)
+    
+    wins = []
+    engine0 = DealerEngine(0)
+    engine1 = StatEngine(1)
+    random.seed(12345)
+    for _ in range(10000):
+        wins.append(run_batch(engine0, engine1))
+    g2 = sum(wins) / len(wins)
+    print(f"As Player: {g1}\nAs Dealer: {g2}")
         

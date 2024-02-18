@@ -58,7 +58,7 @@ class StatEngine():
     def __init__(self, playing_as):
         self.me = playing_as
         pass
-    def best_move(self, board: Board):
+    def _best_move(self, board: Board):
         assert board.current_turn == self.me
         
         X, N = board.shotgun_info()
@@ -123,7 +123,7 @@ class StatEngine():
         return max(eval_dict, key=eval_dict.get)
     
     
-    def _best_move(self, board: Board):
+    def best_move(self, board: Board):
         assert board.current_turn == self.me
         
         X, N = board.shotgun_info()
@@ -232,6 +232,174 @@ class StatEngine():
             return X / N
         elif a == 'self':
             return (-X / N) + ((N - X) / N) * self.expected_value(action[1:], X, N-1)
+
+class NewStatEngine():
+    def __init__(self, playing_as):
+        self.me = playing_as
+        self.op = 1 if playing_as == 0 else 0
+        pass    
+    
+    def best_move(self, board: Board):
+        assert board.current_turn == self.me
+        
+        X, N = board.shotgun_info()
+        items_available = board.items[self.me]
+        
+        moves = board.moves()      
+        
+        if 'cigarettes' in moves and board.charges[self.me] < board.max_charges:
+            return 'cigarettes'
+        elif 'cigarettes' in moves:
+            moves.remove('cigarettes')
+
+        if board.chamber_public == False or X == 0:
+            return 'self'
+        if board.chamber_public != None and 'magnifying_glass' in moves:
+            moves.remove('magnifying_glass')
+        if (X < 2 or N < 2) and 'handcuffs' in moves:
+            moves.remove('handcuffs')
+
+        action_pool = ['beer'] * items_available['beer']
+        #action_pool += ['self']
+        # Single use items
+        for i in ['saw', 'magnifying_glass', 'handcuffs']:
+            if i in moves:
+                action_pool.append(i)
+        
+        dmg = self.get_dmg(board)
+        
+        hit_chance = X / N
+        if board.chamber_public == True:
+            hit_chance = 1
+        elif board.chamber_public == False:
+            hit_chance = 0
+        
+        actions = self.possible_actions(action_pool)
+        actions = {a: self.expected_value(a, X, N, dmg, hit_chance) for a in actions}
+                    
+        if 'handcuffs' in moves:
+            # Figure out followup actions
+            # Oh boy
+            action_pool.remove('handcuffs')
+            for action in actions.keys():
+                if 'handcuffs' not in action:
+                    continue
+                
+                current_items_available = items_available.copy()
+                current_pool = action_pool.copy()
+                
+                for i in ['saw', 'magnifying_glass']:
+                    if i in action:                        
+                        if items_available[i] <= 1:
+                            current_pool.remove(i)  
+                        current_items_available[i] -= 1
+                beer_count = list(action).count('beer')
+                current_items_available['beer'] -= beer_count
+                for _ in range(beer_count):
+                    current_pool.remove('beer')
+                            
+                next_actions = self.possible_actions(current_pool)
+                best_live = max([self.expected_value(a, X-1, N-1, dmg) for a in next_actions])
+                best_blank = max([self.expected_value(a, X, N-1, dmg) for a in next_actions])
+                actions[action] += ((X/N) * best_live) + (((N-X)/N) * best_blank)
+            
+        best_action = max(actions, key=actions.get)
+        return best_action[0] if len(best_action) > 0 else 'op'
+    
+    def get_dmg(self, board: Board):
+        """Worst-case scenario- how much damage can the opponent do
+
+        Args:
+            board (Board): _description_
+        """
+        X, N = board.shotgun_info()
+        me_dmg = 1
+        op_dmg = -1
+        if board.items[self.op]['saw'] > 0:
+            op_dmg = -2
+        if board.items[self.op]['handcuffs'] > 0 and X > 1:
+            if board.items[self.op]['saw'] == 1:
+                op_dmg = -3
+            elif board.items[self.op]['saw'] > 1:
+                op_dmg = -4
+            else:
+                op_dmg = -2
+        
+        if board._active_items['saw'] > 0:
+            me_dmg = 2
+        return me_dmg, op_dmg
+    
+    @staticmethod
+    def possible_actions(action_pool: list):
+        actions = set()
+        actions.add(())
+        for i in range(1, len(action_pool)+1):
+            combs = list(itertools.combinations(action_pool, i))
+            for c in combs:
+                valid = True
+                mg = False
+                for item in c:                
+                    if item == 'magnifying_glass':
+                        mg = True
+                    if item == 'beer'and mg:
+                        valid = False
+                        break
+                if valid:
+                    lc = list(c)
+                    actions.add(tuple(c))
+        return actions
+    
+    @lru_cache(1024)
+    def expected_value(self, action, X, N, dmg: tuple=None, hit_chance = None):
+        if X <= 0 or N <= 0 or X > N:
+            return 0
+        
+        if hit_chance == None:
+            hit_chance = X / N
+        if X == 0:
+            hit_chance = 0
+        elif X == N:
+            hit_chance = 1
+        
+        if len(action) == 0:
+            return (dmg[0] * hit_chance) + (dmg[1] if N > 1 and X > 0 else 0)
+        if isinstance(action, str):
+            action = tuple([action])
+        a = action[0]        
+        
+        if a == 'magnifying_glass':
+            see_live = self.expected_value(action[1:], X, N, dmg, 1)
+            if hit_chance < 1 and X < N:
+                # Guaranteed Skip
+                see_blank = self.expected_value(action[1:], X, N-1, dmg)
+                return (see_live * hit_chance) + (see_blank * (1-hit_chance))
+            else:
+                return 1
+        elif a == 'handcuffs':
+            return self.expected_value(action[1:], X, N, dmg, hit_chance) - dmg[1]
+        
+        elif a == 'saw':
+            n_dmg = (dmg[0] * 2, dmg[1])
+            return self.expected_value(action[1:], X, N, n_dmg, hit_chance)
+        elif a == 'beer':
+            was_live = self.expected_value(action[1:], X-1, N-1, dmg)
+            if hit_chance < 1 and X < N:
+                was_blank = self.expected_value(action[1:], X, N-1, dmg)
+                return (was_live * hit_chance) + (was_blank * (1-hit_chance))
+            else:
+                return was_live   
+        elif a == 'op':
+            return (dmg[0] * hit_chance) + (dmg[1] * (X-1) / (N-1) if N > 1 and X > 0 else 0)
+        elif a == 'self':
+            is_hit = -dmg[0] * hit_chance
+            if X > 1:
+                is_hit += dmg[1] * (X-1) / (N-1)
+            
+            is_miss = self.expected_value(action[1:], X, N-1, dmg) * (1 - hit_chance)
+            if X > 1 and N > 2:
+                is_miss += dmg[1] * (X-1) / (N-2)            
+            
+            return is_hit + is_miss
 
 import random
 class DealerEngine():
@@ -423,10 +591,10 @@ def run_batch(engine0, engine1):
 if __name__ == "__main__":    
     import time
     from tqdm import tqdm
-    iterations = 1000
+    iterations = 10000
     for lives in range(1, 5):
         for bullets in range(2, 9):
-            engine0 = NewEngine(0)
+            engine0 = StatEngine(0)
             engine1 = DealerEngine(1)
             random.seed(12345)
             wins = []

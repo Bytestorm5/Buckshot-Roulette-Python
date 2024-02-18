@@ -1,6 +1,6 @@
 from flask import Flask, render_template, jsonify, request
-from cli_game import Board
-from stat_engine import DealerEngine, StatEngine
+from cli_game import Board, generate_binary_numbers
+from stat_engine import StatEngine, UnCheatEngine, NewEngine
 import time
 
 app = Flask(__name__)
@@ -13,6 +13,10 @@ update_lock = False
 @app.route("/")
 def index():
     return render_template("game_page.html")
+
+@app.route("/move_page")
+def mp():
+    return render_template("move_page.html")
 
 @app.route("/action")
 def act():
@@ -69,7 +73,62 @@ def do_action(action):
     while update_lock:
         time.sleep(0.5)
     return True
+
+@app.route('/modify_board', methods=['POST'])
+def modify_board():
+    data = request.form
+
+    # Parsing form data to create a Board instance
+    charge_count = int(data['charge_count'])
+    total_rounds = int(data['total_rounds']) if data['total_rounds'] else None
+    board = Board(charge_count, total_rounds)
+
+    board.charges = [int(data['p1_charges']), int(data['p2_charges'])]
+    board._shotgun = [True] * int(data['live_rounds']) + [False] * (int(data['total_rounds']) - int(data['live_rounds']))
     
+    # Setting attributes based on form data
+    board.charges = [int(data.get('p1_charges', 0)), int(data.get('p2_charges', 0))]
+    board.current_turn = int(data['current_turn'])
+
+    # Setting items for each player
+    for i in range(2):
+        player_items = {}
+        for item in Board.POSSIBLE_ITEMS:
+            item_key = f'p{i+1}_{item}'
+            player_items[item] = int(data.get(item_key, 0))
+        board.items[i] = player_items
+
+    # Setting active items
+    active_items = {}
+    for item in Board.POSSIBLE_ITEMS:
+        item_key = f'active_{item}'
+        active_items[item] = int(data.get(item_key, 0))
+    board._active_items = active_items
+
+    # Setting other attributes
+    board._skip_next = data.get('skip_next') == 'true'
+    #board.chamber_public = 
+    cham_pub = data.get('chamber_public', 'undefined').lower()
+    if cham_pub == 'true':
+        board.chamber_public = True
+    elif cham_pub == 'false':
+        board.chamber_public = False
+    else:
+        board.chamber_public = None
+    
+    # Add any additional logic here to handle board object
+
+    output = ""
+    se = StatEngine(board.current_turn)
+    output += f"Stat Engine: {se.best_move(board)}<br>"
+    
+    uce = UnCheatEngine(board.current_turn)
+    output += f"UnCheat Engine: {uce.best_move(board)}<br>"
+    
+    ne = NewEngine(board.current_turn)
+    output += f"New Engine: {ne.best_move(board)}<br>"
+    
+    return output  # Or render a template with the board information
     
 
 if __name__ == "__main__":

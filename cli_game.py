@@ -11,7 +11,7 @@ class Items(TypedDict):
     saw: int
     cigarettes: int
     
-class Board:    
+class Board:
     POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw']
     def __init__(self, charge_count, total_rounds = None):
         self.max_charges = charge_count
@@ -22,8 +22,11 @@ class Board:
         live = total // 2
         self._shotgun = random.choice(generate_binary_numbers(live, total))
         
-        self.p1_items: Items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
-        self.p2_items: Items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
+        self.items: list[Items] = [
+            {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0},
+            {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
+        ]
+        #self.p2_items: Items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
         
         self._active_items: Items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
         self._skip_next = False
@@ -39,7 +42,7 @@ class Board:
             
     
     def give_items(self, item_count):
-        for player in [self.p1_items, self.p2_items]:
+        for player in self.items:
             for _ in range(item_count):
                 if sum(player.values()) == 8:
                     break
@@ -71,6 +74,7 @@ class Board:
                 if not at_opponent and not is_hit:
                     return
                 self._active_items['handcuffs'] -= 0.5
+                self._skip_next = True
             
             if self._skip_next:
                 self._skip_next = False
@@ -92,7 +96,7 @@ class Board:
             return 0
     
     def moves(self):
-        items = self.p1_items if self.current_turn == 0 else self.p2_items
+        items = self.items[self.current_turn]
         moves = ['op', 'self']
         for item in self.POSSIBLE_ITEMS:            
             if items[item] > 0 and self._active_items[item] == 0:
@@ -101,7 +105,7 @@ class Board:
 
     def make_move(self, move, load_new = True):
         out_val = None
-        items = self.p1_items if self.current_turn == 0 else self.p2_items
+        items = self.items[self.current_turn]
         match move:
             case 'op':
                 out_val = self.fire(at_opponent=True)
@@ -151,11 +155,45 @@ class Board:
         new_board.charges = self.charges[:]
         new_board.current_turn = self.current_turn
         new_board._shotgun = self._shotgun[:]  # Assuming shotgun is a list
-        new_board.p1_items = copy.deepcopy(self.p1_items)
-        new_board.p2_items = copy.deepcopy(self.p2_items)
+        new_board.items = copy.deepcopy(self.items)        
         new_board._active_items = copy.deepcopy(self._active_items)
         return new_board
+    
+    def __eq__(self, other):
+        if not isinstance(other, Board):
+            return NotImplemented
+        
+        # Comparing all relevant attributes for equality
+        return (self.max_charges == other.max_charges and
+                self.charges == other.charges and
+                self.current_turn == other.current_turn and
+                self._shotgun == other._shotgun and
+                self.items == other.items and
+                self._active_items == other._active_items and
+                self._skip_next == other._skip_next and
+                self.chamber_public == other.chamber_public)
 
+    def __hash__(self):
+        # Creating a hash based on a tuple of immutable representations of relevant attributes
+        return hash((self.max_charges, 
+                     tuple(self.charges), 
+                     self.current_turn, 
+                     tuple(self._shotgun), 
+                     tuple(tuple(sorted(player.items())) for player in self.items), 
+                     tuple(sorted(self._active_items.items())), 
+                     self._skip_next, 
+                     self.chamber_public))
+    def to_json(self):
+        return {
+            "max_charges": self.max_charges,
+            "charges": self.charges,
+            "current_turn": self.current_turn,
+            "shotgun": self._shotgun,
+            "items": self.items,
+            "active_items": self._active_items,
+            "skip_next": self._skip_next,
+            "chamber_public": self.chamber_public
+        }
 def generate_binary_numbers(X, N):
     if X > N or X < 0 or N < 0:
         raise ValueError("Invalid inputs. Ensure 0 <= X <= N.")
@@ -181,6 +219,8 @@ def binomial_coefficient(X, N):
   
 if __name__ == "__main__":
     board = Board(5)
+    board.__hash__()
+    
     live = sum([1 if x else 0 for x in board._shotgun])
     while board.winner() == None:
         live = sum([1 if x else 0 for x in board._shotgun])

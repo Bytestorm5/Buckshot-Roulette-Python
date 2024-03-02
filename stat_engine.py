@@ -238,7 +238,6 @@ class NewStatEngine():
         self.me = playing_as
         self.op = 1 if playing_as == 0 else 0
         pass    
-    
     def best_move(self, board: Board):
         assert board.current_turn == self.me
         
@@ -252,29 +251,53 @@ class NewStatEngine():
         elif 'cigarettes' in moves:
             moves.remove('cigarettes')
 
-        if board.chamber_public == False or X == 0:
-            return 'self'
-        if board.chamber_public != None and 'magnifying_glass' in moves:
+        known_bullet = board.chamber_public
+        if X == 0:
+            known_bullet = False
+        if X == N:
+            known_bullet = True
+        
+        if known_bullet == False:
+            return 'self'        
+        if known_bullet == True:
+            if X == N:
+                if 'handcuffs' in moves and X >= 2:
+                   if X > 2:
+                       # Deny opponent as many lives as possible
+                       return 'beer' if 'beer' in moves else 'handcuffs'
+                   else:
+                       return 'handcuffs'                   
+                else:
+                    if 'saw' in moves:
+                        return 'saw'
+                    else:
+                        return 'op'
+            elif 'saw' in moves:
+                return 'saw'
+        
+        if known_bullet != None and 'magnifying_glass' in moves:
             moves.remove('magnifying_glass')
         if (X < 2 or N < 2) and 'handcuffs' in moves:
             moves.remove('handcuffs')
+        
 
         action_pool = ['beer'] * items_available['beer']
-        #action_pool += ['self']
+        action_pool += ['self']
         # Single use items
-        for i in ['saw', 'magnifying_glass', 'handcuffs']:
+        for i in ['magnifying_glass', 'saw', 'handcuffs']:
             if i in moves:
                 action_pool.append(i)
         
         dmg = self.get_dmg(board)
+        dmg = (min(dmg[0], board.charges[1]), min(dmg[1], board.charges[0]))
         
         hit_chance = X / N
-        if board.chamber_public == True:
+        if known_bullet == True:
             hit_chance = 1
-        elif board.chamber_public == False:
+        elif known_bullet == False:
             hit_chance = 0
         
-        actions = self.possible_actions(action_pool)
+        actions = self.possible_actions(action_pool) #, board.items[self.me]['beer'])
         actions = {a: self.expected_value(a, X, N, dmg, hit_chance) for a in actions}
                     
         if 'handcuffs' in moves:
@@ -293,7 +316,7 @@ class NewStatEngine():
                         if items_available[i] <= 1:
                             current_pool.remove(i)  
                         current_items_available[i] -= 1
-                beer_count = list(action).count('beer')
+                beer_count = list(current_pool).count('beer')
                 current_items_available['beer'] -= beer_count
                 for _ in range(beer_count):
                     current_pool.remove('beer')
@@ -302,8 +325,16 @@ class NewStatEngine():
                 best_live = max([self.expected_value(a, X-1, N-1, dmg) for a in next_actions])
                 best_blank = max([self.expected_value(a, X, N-1, dmg) for a in next_actions])
                 actions[action] += ((X/N) * best_live) + (((N-X)/N) * best_blank)
-            
-        best_action = max(actions, key=actions.get)
+
+        best_action = None
+        best_value = float('-inf')
+        for action, val in actions.items():
+            if val > best_value or \
+                (val == best_value and len(action) < len(best_action)):
+                    
+                best_action = action
+                best_value = val            
+                
         return best_action[0] if len(best_action) > 0 else 'op'
     
     def get_dmg(self, board: Board):
@@ -323,7 +354,7 @@ class NewStatEngine():
             elif board.items[self.op]['saw'] > 1:
                 op_dmg = -4
             else:
-                op_dmg = -2
+                op_dmg = -2        
         
         if board._active_items['saw'] > 0:
             me_dmg = 2
@@ -345,7 +376,6 @@ class NewStatEngine():
                         valid = False
                         break
                 if valid:
-                    lc = list(c)
                     actions.add(tuple(c))
         return actions
     
@@ -365,7 +395,7 @@ class NewStatEngine():
             return (dmg[0] * hit_chance) + (dmg[1] if N > 1 and X > 0 else 0)
         if isinstance(action, str):
             action = tuple([action])
-        a = action[0]        
+        a = action[0]
         
         if a == 'magnifying_glass':
             see_live = self.expected_value(action[1:], X, N, dmg, 1)
@@ -456,6 +486,42 @@ class NewEngine():
     def best_move(self, board: Board):
         return expectimax(board, 8, self.me)[0]
 
+class CheatEngine2():
+    def __init__(self, turn):
+        self.me = turn
+    def best_move(self, board: Board):
+        moves = board.moves()
+        X, N = board.shotgun_info()
+        
+        if 'cigarettes' in moves and board.charges[self.me] < board.max_charges:
+            return 'cigarettes'
+
+        if 'beer' in moves:
+            beer_count = board.items[self.me]['beer']
+            min_X = float('inf')
+            min_c = 0
+            for c in range(0, beer_count):
+                mX = sum([1 if x else 0 for x in board._shotgun[c:]])
+                if mX < min_X and X > 0:
+                    min_X = mX
+                    min_c = c
+            if min_c > 0:
+                return 'beer'
+        
+        if 'magnifying_glass' in moves:
+            return 'magnifying_glass'
+        
+        if board._shotgun[0] == False:
+            return 'self'
+        else:
+            if board.items[self.me]['saw'] > 0:
+                return 'saw'
+            elif X > 2 and 'handcuffs' in moves:
+                return 'handcuffs'
+            else:
+                return 'op'
+            
+
 class CheatEngine():
     def __init__(self, turn):
         self.me = turn
@@ -537,7 +603,7 @@ class CheatEngine():
 class UnCheatEngine():
     def __init__(self, turn):
         self.me = turn
-        self.engine = CheatEngine(self.me)
+        self.engine = CheatEngine2(self.me)
     def best_move(self, board: Board, depth=8):
         X, N = board.shotgun_info()
         best_dict = {}
@@ -545,7 +611,7 @@ class UnCheatEngine():
             new_board = board.copy()
             new_board._shotgun = possibility
             
-            move = self.engine.best_move(new_board, depth=depth)
+            move = self.engine.best_move(new_board)
             if move in best_dict:
                 best_dict[move] += 1
             else:
@@ -570,12 +636,20 @@ class UnCheatEngine():
 from tqdm import tqdm
 import time
 
+def heuristic(board: Board):
+    h = board.charges[0] - board.charges[1]
+    return h / max(board.charges)
+
 def run_round(board: Board, engine0, engine1):
     while board.winner() == None:
         if board.current_turn == 0:
+            # board.items[0]['saw'] = 0
+            # board.items[1]['saw'] = 0
             move = engine0.best_move(board)
             board.make_move(move)
         else:
+            # board.items[0]['saw'] = 0
+            # board.items[1]['saw'] = 0
             move = engine1.best_move(board)
             board.make_move(move)
     return board.winner()
@@ -591,21 +665,50 @@ def run_batch(engine0, engine1):
 if __name__ == "__main__":    
     import time
     from tqdm import tqdm
+    import matplotlib.pyplot as plt
+    import numpy as np
     iterations = 10000
-    for lives in range(1, 5):
-        for bullets in range(2, 9):
-            engine0 = StatEngine(0)
-            engine1 = DealerEngine(1)
-            random.seed(12345)
-            wins = []
-            for _ in range(iterations):
-                wins.append(1 - run_round(Board(lives, bullets), engine0, engine1))
-            g1 = sum(wins) / len(wins)
+    
+    # for lives in range(1, 5):
+    #     random.seed(12345)
+    #     wins = []
+    #     for _ in range(iterations):
+    #         engine0 = NewStatEngine(0)
+    #         engine1 = DealerEngine(1)
             
-            g1_std = sqrt((g1 * (1 - g1)) / iterations)
-            print(str(g1) + "\t", end="")
-        print()
+    #         wins.append(1 - run_round(Board(lives), engine0, engine1))
+    #     g1 = sum(wins) / len(wins)
+    #     g1_std = sqrt((g1 * (1 - g1)) / iterations)
+    #     print(f"[{lives}]: {g1}, SE: {g1_std:.5f}")
+    
+    in_batches = False
+    
+    if in_batches:
+        engine0 = NewStatEngine(0)
+        engine1 = DealerEngine(1)
+        wins = []
+        for _ in range(iterations):
+            winner = run_batch(engine0, engine1)
+            wins.append(1 - winner)
+        g1 = sum(wins) / len(wins)
         
+        g1_std = sqrt((g1 * (1 - g1)) / iterations)
+        print(str(g1) + "\t", end="")    
+    else:
+        for lives in range(1, 5):
+            for bullets in range(2, 9):
+                engine0 = NewStatEngine(0)
+                engine1 = DealerEngine(1)
+                random.seed(12345)
+                wins = []
+                for _ in range(iterations):
+                    winner = run_round(Board(lives, bullets), engine0, engine1)
+                    wins.append(1 - winner)
+                g1 = sum(wins) / len(wins)
+                
+                g1_std = sqrt((g1 * (1 - g1)) / iterations)
+                print(str(g1) + "\t", end="")
+            print()
 
             #print(f"Lives: {lives}\nAs Player: {g1*100}% std: {g1_std*100}%\n")
         

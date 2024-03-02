@@ -13,13 +13,16 @@ class Items(TypedDict):
     
 class Board:
     POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw']
-    def __init__(self, charge_count, total_rounds = None):
+    def __init__(self, charge_count, total_rounds = None, live_rounds = None):
         self.max_charges = charge_count
         self.charges = [charge_count, charge_count]
         self.current_turn = 0
         
         total = total_rounds if total_rounds else random.randint(2, 8)
-        live = total // 2
+        live = total // 2 if live_rounds == None else live_rounds
+        if live > total:
+            raise ValueError("Live Rounds must be less than Total Rounds")
+        
         self._shotgun = random.choice(generate_binary_numbers(live, total))
         
         self.items: list[Items] = [

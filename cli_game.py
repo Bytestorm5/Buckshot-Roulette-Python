@@ -1,18 +1,25 @@
 import random
 from typing import TypedDict
+from dataclasses import dataclass, asdict
 import itertools
 import math
 import copy
 
-class Items(TypedDict):
-    handcuffs: int
-    magnifying_glass: int
-    beer: int
-    saw: int
-    cigarettes: int
+@dataclass(init=True)
+class Items():
+    handcuffs: int = 0
+    magnifying_glass: int = 0
+    beer: int = 0
+    saw: int = 0
+    cigarettes: int = 0
+    inverter: int = 0
+    burner_phone: int = 0
+    meds: int = 0
+    adrenaline: int = 0
     
 class Board:
-    POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw']
+    POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw', 'inverter', 'burner_phone', 'meds', 'adrenaline']
+    ITEM_CAPS = {'handcuffs': 1, 'magnifying_glass': 3, 'beer': 2, 'cigarettes': 1, 'saw': 3, 'inverter':8, 'burner_phone':1, 'meds':1, 'adrenaline':2}
     def __init__(self, charge_count, total_rounds = None, live_rounds = None):
         self.max_charges = charge_count
         self.charges = [charge_count, charge_count]
@@ -23,33 +30,38 @@ class Board:
         if live > total:
             raise ValueError("Live Rounds must be less than Total Rounds")
         
-        self._shotgun = random.choice(generate_binary_numbers(live, total))
+        self._shotgun = ([True] * live) + ([False * (total - live)])
+        random.shuffle(self._shotgun)
         
         self.items: list[Items] = [
-            {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0},
-            {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
+            Items(),
+            Items()
         ]
         #self.p2_items: Items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
         
-        self._active_items: Items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}
+        self._active_items: Items = Items()
         self._skip_next = False
         
         self.chamber_public = None
+        self.give_items(random.randint(2, 5))       
 
     def new_rounds(self, drop_items = True):
         total = random.randint(2, 8)
         live = random.randint(1, total-1)
-        self._shotgun = random.choice(generate_binary_numbers(live, total))
+        self._shotgun = ([True] * live) + ([False * (total - live)])
+        random.shuffle(self._shotgun)
         if drop_items:
-            self.give_items(random.randint(1, 4))
+            self.give_items(random.randint(2, 5))
             
     
     def give_items(self, item_count):
         for player in self.items:
-            for _ in range(item_count):
-                if sum(player.values()) == 8:
-                    break
-                item = random.choice(self.POSSIBLE_ITEMS)
+            if sum(player.values()) == 8:
+                # unfortunate.
+                break
+            choices = self.POSSIBLE_ITEMS - [k for k, v in player.items() if v > self.ITEM_CAPS[k]]
+            items = random.choices(choices, k=min(item_count, 8 - sum(player.values())))
+            for item in items:
                 player[item] += 1
     
     def shotgun_info(self):
@@ -72,11 +84,11 @@ class Board:
         self.chamber_public = None
         
         def switch():
-            self._active_items['saw'] = 0
-            if self._active_items['handcuffs'] > 0.5:
+            self._active_items.saw = 0
+            if self._active_items.handcuffs > 0.5:
                 if not at_opponent and not is_hit:
                     return
-                self._active_items['handcuffs'] -= 0.5
+                self._active_items.handcuffs -= 0.5
                 self._skip_next = True
             
             if self._skip_next:
@@ -86,8 +98,8 @@ class Board:
                         
         if is_hit:
             damage = 1
-            if self._active_items['saw'] > 0:
-                self._active_items['saw'] = 0
+            if self._active_items.saw > 0:
+                self._active_items.saw = 0
                 damage = 2
             self.charges[target] -= damage
             switch()
@@ -99,8 +111,13 @@ class Board:
             return 0
     
     def moves(self):
-        items = self.items[self.current_turn]
-        moves = ['op', 'self']
+        if self._active_items.adrenaline > 0:
+            moves = [] # Player MUST pick an opponent's item
+            items = self.items[self.opponent()]
+        else:
+            moves = ['op', 'self']
+            items = self.items[self.current_turn]
+        
         for item in self.POSSIBLE_ITEMS:            
             if items[item] > 0 and self._active_items[item] == 0:
                 moves.append(item)
@@ -108,22 +125,25 @@ class Board:
 
     def make_move(self, move, load_new = True):
         out_val = None
-        items = self.items[self.current_turn]
+        if self._active_items.adrenaline > 0:
+            items = self.items[self.opponent()]
+        else:
+            items = self.items[self.current_turn]
         match move:
             case 'op':
                 out_val = self.fire(at_opponent=True)
             case 'self':
                 out_val = -self.fire(at_opponent=False)
             case 'handcuffs':
-                items['handcuffs'] -= 1
-                self._active_items['handcuffs'] += 1
+                items.handcuffs -= 1
+                self._active_items.handcuffs += 1
                 self._skip_next = True
             case 'magnifying_glass':
-                items['magnifying_glass'] -= 1
+                items.magnifying_glass -= 1
                 out_val = self._shotgun[0]
                 self.chamber_public = self._shotgun[0]
             case 'beer':
-                items['beer'] -= 1
+                items.beer -= 1
                 if len(self._shotgun) > 1:
                     val = self._shotgun[0]
                     self._shotgun = self._shotgun[1:]
@@ -131,17 +151,36 @@ class Board:
                 else:
                     self._shotgun = []
             case 'cigarettes':
-                items['cigarettes'] -= 1
+                items.cigarettes -= 1
                 self.charges[self.current_turn] = min(self.charges[self.current_turn]+1, self.max_charges)
             case 'saw':
-                items['saw'] -= 1
-                self._active_items['saw'] += 1
+                items.saw -= 1
+                self._active_items.saw += 1
+            case 'inverter':
+                items.inverter -= 1
+                self._shotgun[0] = not self._shotgun[0]
+            case 'burner_phone':
+                items.burner_phone -= 1
+                if len(self._shotgun) > 1:
+                    idx = random.randint(1, len(self._shotgun)-1)
+                    out_val = (idx, self._shotgun[idx])
+            case 'meds':
+                items.meds -= 1
+                if random.random() > 0.4:
+                    self.charges[self.current_turn] = max(self.charges[self.current_turn] + 2, self.max_charges)
+                else:
+                    self.charges[self.current_turn] -= 1
+            case 'adrenaline':
+                items.adrenaline -= 1
+                self._active_items.adrenaline += 1
+                    
         
         if load_new and len(self._shotgun) == 0:
             self.current_turn = 0
             self.new_rounds()
+            return out_val, True
         
-        return out_val
+        return out_val, len(self._shotgun) == 0
     
     def live_round(self):
         return self._shotgun[0]
@@ -157,7 +196,7 @@ class Board:
         new_board = Board(charge_count=0)  # Temporary charge count; will be overwritten
         new_board.charges = self.charges[:]
         new_board.current_turn = self.current_turn
-        new_board._shotgun = self._shotgun[:]  # Assuming shotgun is a list
+        new_board._shotgun = self._shotgun[:]
         new_board.items = copy.deepcopy(self.items)        
         new_board._active_items = copy.deepcopy(self._active_items)
         return new_board
@@ -197,28 +236,6 @@ class Board:
             "skip_next": self._skip_next,
             "chamber_public": self.chamber_public
         }
-def generate_binary_numbers(X, N):
-    if X > N or X < 0 or N < 0:
-        raise ValueError("Invalid inputs. Ensure 0 <= X <= N.")
-
-    binary_numbers = []
-
-    # Generate all combinations of indices where 1s can be placed
-    for indices in itertools.combinations(range(N), X):
-        # Create a binary number with 0s and set 1s at the specific indices
-        binary_number = [False] * N
-        for index in indices:
-            binary_number[index] = True
-        binary_numbers.append(binary_number)
-
-    return binary_numbers
-
-def binomial_coefficient(X, N):
-    """Calculate the binomial coefficient 'N choose X'."""
-    if X < 0 or N < 0 or X > N:
-        raise ValueError("Invalid inputs. Ensure 0 <= X <= N.")
-    
-    return math.factorial(N) // ( math.factorial(X) *  math.factorial(N - X))
   
 if __name__ == "__main__":
     board = Board(5)
@@ -246,11 +263,11 @@ if __name__ == "__main__":
                 print(f'[{i}]: {move}')
             
             idx = int(input("Enter Move here (0-indexed): "))
-            print("Result:", board.make_move(moves[idx]))
+            print("Result:", board.make_move(moves[idx])[0])
             print("------------------------------")
         else:
             while board.current_turn == 1:
                 move = random.choice(board.moves())
                 print("Bot Used:", move)
-                print("Result:", board.make_move(move))
+                print("Result:", board.make_move(move)[0])
                 print("------------------------------")

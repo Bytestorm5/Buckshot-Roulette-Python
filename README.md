@@ -9,6 +9,9 @@ Mainly intended for use in developing engines to play the game optimally.
 
 ## Quickstart
 ```
+pip install buckshot-roulette
+```
+```python
 from buckshot_roulette import BuckshotRoulette
 
 board = BuckshotRoulette(charge_count=4)

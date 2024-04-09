@@ -1,5 +1,5 @@
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, astuple
 import copy
 
 @dataclass(init=True)
@@ -244,8 +244,8 @@ class BuckshotRoulette:
                      tuple(self.charges), 
                      self.current_turn, 
                      tuple(self._shotgun), 
-                     tuple(tuple(sorted(player.items())) for player in self.items), 
-                     tuple(sorted(self._active_items.items())), 
+                     tuple(astuple(player) for player in self.items), 
+                     astuple(self._active_items), 
                      self._skip_next, 
                      self.chamber_public))
     def to_json(self):

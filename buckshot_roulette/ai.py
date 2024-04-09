@@ -1,10 +1,11 @@
-from game import BuckshotRoulette
+from buckshot_roulette.game import BuckshotRoulette
 from typing import Literal
 from dataclasses import asdict
 import random
     
 class Dealer:
-    def __init__(self, playing_as: Literal[0, 1]):        
+    def __init__(self, playing_as: Literal[0, 1]):   
+        self.me = playing_as     
         self.known_shells: list[bool] = None
         self.target = None
         self.known_shell = None

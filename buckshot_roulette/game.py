@@ -1,8 +1,5 @@
 import random
-from typing import TypedDict
-from dataclasses import dataclass, asdict
-import itertools
-import math
+from dataclasses import dataclass
 import copy
 
 @dataclass(init=True)
@@ -17,9 +14,21 @@ class Items():
     meds: int = 0
     adrenaline: int = 0
     
-class Board:
+    def item_count(self):
+        return self.handcuffs + self.magnifying_glass + self.beer + self.saw + self.cigarettes + self.inverter + self.burner_phone + self.meds + self.adrenaline
+    
+    def __getitem__(self, key):
+        return self.__getattribute__(key)
+
+    def __setitem__(self, key, value):
+        self.__setattr__(key, value)
+
+    def __delitem__(self, key):
+        self.__setattr__(key, 0)
+
+class BuckshotRoulette:
     POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw', 'inverter', 'burner_phone', 'meds', 'adrenaline']
-    ITEM_CAPS = {'handcuffs': 1, 'magnifying_glass': 3, 'beer': 2, 'cigarettes': 1, 'saw': 3, 'inverter':8, 'burner_phone':1, 'meds':1, 'adrenaline':2}
+    ITEM_CAPS = Items(handcuffs=1, magnifying_glass=3, beer=2, cigarettes=1, saw=3, inverter=8, burner_phone=1, meds=1, adrenaline=2)
     def __init__(self, charge_count, total_rounds = None, live_rounds = None):
         self.max_charges = charge_count
         self.charges = [charge_count, charge_count]
@@ -52,15 +61,20 @@ class Board:
         random.shuffle(self._shotgun)
         if drop_items:
             self.give_items(random.randint(2, 5))
-            
     
     def give_items(self, item_count):
         for player in self.items:
-            if sum(player.values()) == 8:
+            if player.item_count() == 8:
                 # unfortunate.
                 break
-            choices = self.POSSIBLE_ITEMS - [k for k, v in player.items() if v > self.ITEM_CAPS[k]]
-            items = random.choices(choices, k=min(item_count, 8 - sum(player.values())))
+            choices = [i for i in self.POSSIBLE_ITEMS if player[i] < self.ITEM_CAPS[i]]
+            
+            # Patch 1.2.1
+            # TODO: Double check behavior with source code when someone rips it
+            if self.max_charges <= 2 and 'saw' in choices:
+                choices.remove('saw')
+                
+            items = random.choices(choices, k=min(item_count, 8 - player.item_count()))
             for item in items:
                 player[item] += 1
     
@@ -109,6 +123,15 @@ class Board:
             return 0
         else: # Shot at self and missed
             return 0
+    
+    def legal_items(self) -> list[str]:
+        """All items that could be used in the current board state, regardless of whether the player currently has them
+        """
+        out_arr = []
+        for item in self.POSSIBLE_ITEMS:
+            if self._active_items[item] == 0:
+                out_arr.append(item)
+        return out_arr
     
     def moves(self):
         if self._active_items.adrenaline > 0:
@@ -166,7 +189,7 @@ class Board:
                     out_val = (idx, self._shotgun[idx])
             case 'meds':
                 items.meds -= 1
-                if random.random() > 0.4:
+                if random.random() > 0.5:
                     self.charges[self.current_turn] = max(self.charges[self.current_turn] + 2, self.max_charges)
                 else:
                     self.charges[self.current_turn] -= 1
@@ -193,7 +216,7 @@ class Board:
         return 1 if self.current_turn == 0 else 0
 
     def copy(self):
-        new_board = Board(charge_count=0)  # Temporary charge count; will be overwritten
+        new_board = BuckshotRoulette(charge_count=0)  # Temporary charge count; will be overwritten
         new_board.charges = self.charges[:]
         new_board.current_turn = self.current_turn
         new_board._shotgun = self._shotgun[:]
@@ -202,7 +225,7 @@ class Board:
         return new_board
     
     def __eq__(self, other):
-        if not isinstance(other, Board):
+        if not isinstance(other, BuckshotRoulette):
             return NotImplemented
         
         # Comparing all relevant attributes for equality
@@ -236,38 +259,3 @@ class Board:
             "skip_next": self._skip_next,
             "chamber_public": self.chamber_public
         }
-  
-if __name__ == "__main__":
-    board = Board(5)
-    board.__hash__()
-    
-    live = sum([1 if x else 0 for x in board._shotgun])
-    while board.winner() == None:
-        live = sum([1 if x else 0 for x in board._shotgun])
-        print(f"{live} Live, {len(board._shotgun) - live} Blank.")
-        if board.current_turn == 0:
-            print("Charges:")
-            print(board.charges)
-            print()
-            print("Active Items:")
-            print(board._active_items)
-            print()
-            print("Your Items")
-            print(board.p1_items)
-            print()
-            print("Opponent Items")
-            print(board.p2_items)
-            
-            moves = board.moves()
-            for i, move in enumerate(moves):
-                print(f'[{i}]: {move}')
-            
-            idx = int(input("Enter Move here (0-indexed): "))
-            print("Result:", board.make_move(moves[idx])[0])
-            print("------------------------------")
-        else:
-            while board.current_turn == 1:
-                move = random.choice(board.moves())
-                print("Bot Used:", move)
-                print("Result:", board.make_move(move)[0])
-                print("------------------------------")

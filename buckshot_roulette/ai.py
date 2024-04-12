@@ -2,8 +2,33 @@ from buckshot_roulette.game import BuckshotRoulette
 from typing import Literal
 from dataclasses import asdict
 import random
+import abc
+import typing
+
+class AbstractEngine(abc.ABC):
+    def __init__(self, playing_as: Literal[0, 1]):
+        self.me = playing_as
     
-class Dealer:
+    @abc.abstractmethod
+    def choice(self, board:BuckshotRoulette):
+        """Determines what move this model takes from this given board position
+
+        Args:
+            board (BuckshotRoulette): The current game state
+        """
+        pass
+    
+    @abc.abstractmethod
+    def post(self, last_move, result):
+        """Any post-processing steps that the model needs to make after a move has been made. Typically used to store results of the magnifying glass and burner phone.
+
+        Args:
+            last_move (str): The move that the engine just made
+            result (Any): The output of board.make_move
+        """
+        pass
+
+class Dealer(AbstractEngine):
     def __init__(self, playing_as: Literal[0, 1]):   
         self.me = playing_as     
         self.known_shells: list[bool] = None
@@ -36,7 +61,7 @@ class Dealer:
         
         return False        
        
-    def make_move(self, board: BuckshotRoulette):
+    def choice(self, board: BuckshotRoulette):
         if self.known_shells == None:
             self.known_shells = [False] * len(board._shotgun)
             self.known_shells[-1] = True
@@ -44,7 +69,8 @@ class Dealer:
         if list_diff < 0:
             self.known_shells.extend([False] * -list_diff)
         if list_diff > 0:
-            self.known_shells = self.known_shells[:-list_diff]
+            # Should basically never be a difference > 1
+            self.known_shells = self.known_shells[list_diff:]
         
         if self.known_shell == None:
             if self._figure_out_shell(board):
@@ -60,25 +86,22 @@ class Dealer:
             self.known_shell = board._shotgun[0]
             self.target = 'op' if self.known_shell else 'self'
         
-        using_adrenaline = board.items[self.me].adrenaline > 0
         using_medicine = None
-        has_cigs = board.items[self.me].cigarettes > 0
         wants_to_use = None
         
         moves = board.legal_items()
         for item in board.POSSIBLE_ITEMS:
             if item in moves and board.items[self.me][item] < 1 and (board.items[self.me].adrenaline < 1 or board.items[1][item] < 1):
                 moves.remove(item)
-                
+            
         for item in moves:
             if item == 'magnifying_glass' and self.known_shell == None and len(board._shotgun) != 1:
                 wants_to_use = item
                 break
             if item == 'cigarettes' and board.charges[self.me] < board.max_charges:
                 wants_to_use = item
-                has_cigs = False
                 break
-            if item == 'meds' and board.charges[1 - self.me] < board.max_charges and not has_cigs and not using_medicine:
+            if item == 'meds' and board.charges[1 - self.me] < board.max_charges and not 'cigarettes' in moves and not using_medicine:
                 wants_to_use = item
                 using_medicine = True
                 break
@@ -99,10 +122,8 @@ class Dealer:
                 wants_to_use = item
                 self.known_shell = True                
                 break
-        
-        main_loop_finished = wants_to_use == None
-        has_saw = board.items[self.me].saw > 0
-        if main_loop_finished and 'saw' in moves and self.known_shell == True:
+
+        if wants_to_use == None and 'saw' in moves and self.known_shell == True:
             decision = random.random() > 0.5
             if decision:
                 self.target = 'self'
@@ -110,28 +131,37 @@ class Dealer:
                 self.target = 'op'
                 wants_to_use = 'saw'
         if wants_to_use != None:
-            if using_adrenaline and board.items[self.me][wants_to_use] < 1:
-                board.make_move('adrenaline')
-            result, _ = board.make_move(wants_to_use)
-            match wants_to_use:
-                case 'magnifying_glass':
-                    self.known_shells[0] = True
-                    self.known_shell = board._shotgun[0]
-                    pass
-                case 'beer':
-                    self.known_shells = self.known_shells[1:]
-                    pass
-                case 'burner_phone':
-                    self.known_shells[result[0]] = True
+            if 'adrenaline' in moves and board.items[self.me][wants_to_use] < 1:
+                return 'adrenaline'
+            return wants_to_use        
         else:
             if self.target == None:
                 decision = random.random() > 0.5
                 if decision:
-                    board.make_move('op')
+                    return 'op'
                 else:
-                    board.make_move('self')
+                    return 'self'
             else:
-                board.make_move(self.target)
-                self.target = None
-            self.known_shells = self.known_shells[1:]
-            self.known_shell = board._shotgun[0] if len(self.known_shells) > 0 and self.known_shells[0] else None
+                return self.target
+    
+    def post(self, last_move, move_result):        
+        if last_move in ['op', 'self']:
+            self.target = None
+            
+        match last_move:
+            case 'magnifying_glass':
+                self.known_shells[0] = True
+                self.known_shell = move_result
+                pass
+            case 'burner_phone':
+                self.known_shells[move_result[0]] = True
+        
+class Random(AbstractEngine):
+    def __init__(self, playing_as):
+        pass
+    
+    def choice(self, board: BuckshotRoulette):
+        return random.choice(board.moves())
+
+    def post(self, last_move, res):
+        pass

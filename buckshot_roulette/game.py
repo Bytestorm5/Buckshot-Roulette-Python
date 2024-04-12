@@ -144,13 +144,19 @@ class BuckshotRoulette:
         for item in self.POSSIBLE_ITEMS:            
             if items[item] > 0 and self._active_items[item] == 0:
                 moves.append(item)
+                
+        if len(moves) == 0:
+            # Only possible if the previous move is adrenaline, and there are no valid items to take
+            # Unfortunate.
+            self._active_items.adrenaline = 0
+            return self.moves()            
         return moves
 
     def make_move(self, move, load_new = True):
         out_val = None
         if self._active_items.adrenaline > 0:
             items = self.items[self.opponent()]
-            self._active_items.adrenaline -= 1
+            self._active_items.adrenaline = 0
         else:
             items = self.items[self.current_turn]
         match move:
@@ -202,9 +208,9 @@ class BuckshotRoulette:
         if load_new and len(self._shotgun) == 0:
             self.current_turn = 0
             self.new_rounds()
-            return out_val, True
+            return out_val
         
-        return out_val, len(self._shotgun) == 0
+        return out_val
     
     def live_round(self):
         return self._shotgun[0]

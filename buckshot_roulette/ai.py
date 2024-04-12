@@ -11,6 +11,10 @@ class Dealer:
         self.known_shell = None
         
     def _figure_out_shell(self, board: BuckshotRoulette):
+        while len(self.known_shells) > len(board._shotgun):
+            self.known_shells = self.known_shells[1:]
+        while len(self.known_shells) < len(board._shotgun):
+            self.known_shells.append(False)
         if self.known_shells[0]:
             return True
         
@@ -36,6 +40,11 @@ class Dealer:
         if self.known_shells == None:
             self.known_shells = [False] * len(board._shotgun)
             self.known_shells[-1] = True
+        list_diff = len(self.known_shells) - len(board._shotgun)
+        if list_diff < 0:
+            self.known_shells.extend([False] * -list_diff)
+        if list_diff > 0:
+            self.known_shells = self.known_shells[:-list_diff]
         
         if self.known_shell == None:
             if self._figure_out_shell(board):
@@ -52,13 +61,13 @@ class Dealer:
             self.target = 'op' if self.known_shell else 'self'
         
         using_adrenaline = board.items[self.me].adrenaline > 0
-        
+        using_medicine = None
         has_cigs = board.items[self.me].cigarettes > 0
         wants_to_use = None
         
         moves = board.legal_items()
         for item in board.POSSIBLE_ITEMS:
-            if board.items[0][item] < 1 and board.items[1][item] < 1:
+            if item in moves and board.items[self.me][item] < 1 and (board.items[self.me].adrenaline < 1 or board.items[1][item] < 1):
                 moves.remove(item)
                 
         for item in moves:
@@ -103,7 +112,7 @@ class Dealer:
         if wants_to_use != None:
             if using_adrenaline and board.items[self.me][wants_to_use] < 1:
                 board.make_move('adrenaline')
-            result = board.make_move(wants_to_use)
+            result, _ = board.make_move(wants_to_use)
             match wants_to_use:
                 case 'magnifying_glass':
                     self.known_shells[0] = True
@@ -125,4 +134,4 @@ class Dealer:
                 board.make_move(self.target)
                 self.target = None
             self.known_shells = self.known_shells[1:]
-            self.known_shell = board._shotgun[0] if self.known_shells[0] else None
+            self.known_shell = board._shotgun[0] if len(self.known_shells) > 0 and self.known_shells[0] else None

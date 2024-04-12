@@ -150,6 +150,7 @@ class BuckshotRoulette:
         out_val = None
         if self._active_items.adrenaline > 0:
             items = self.items[self.opponent()]
+            self._active_items.adrenaline -= 1
         else:
             items = self.items[self.current_turn]
         match move:

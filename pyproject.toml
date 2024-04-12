@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "buckshot-roulette"
-version = "0.0.5"
+version = "0.1.0"
 authors = [
   { name="Bytestorm" },
 ]

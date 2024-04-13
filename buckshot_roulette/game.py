@@ -25,6 +25,30 @@ class Items():
 
     def __delitem__(self, key):
         self.__setattr__(key, 0)
+    
+    def __iter__(self):
+        return ItemIterable(self)
+
+class ItemIterable():
+    def __init__(self, data: Items):
+        self.data: Items = data
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index < len(BuckshotRoulette.POSSIBLE_ITEMS):
+            while self.index < len(BuckshotRoulette.POSSIBLE_ITEMS) and self.data[BuckshotRoulette.POSSIBLE_ITEMS[self.index]] < 1:
+                self.index += 1                
+            if self.index >= len(BuckshotRoulette.POSSIBLE_ITEMS):
+                raise StopIteration
+            
+            item = BuckshotRoulette.POSSIBLE_ITEMS[self.index]
+            self.index += 1
+            return item
+        else:
+            raise StopIteration
 
 class BuckshotRoulette:
     POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw', 'inverter', 'burner_phone', 'meds', 'adrenaline']

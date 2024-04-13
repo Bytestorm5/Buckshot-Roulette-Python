@@ -32,70 +32,54 @@ class Dealer(AbstractEngine):
     def __init__(self, playing_as: Literal[0, 1]):   
         self.me = playing_as     
         self.known_shells: list[bool] = None
-        self.target = None
-        self.known_shell = None
-        
-    def _figure_out_shell(self, board: BuckshotRoulette):
-        while len(self.known_shells) > len(board._shotgun):
-            self.known_shells = self.known_shells[1:]
-        while len(self.known_shells) < len(board._shotgun):
-            self.known_shells.append(False)
-        if self.known_shells[0]:
-            return True
-        
-        c_live, c_blank = board.shotgun_info()
-        c_blank -= c_live
-        
-        if c_live == 0 or c_blank == 0:
-            return True
-        
-        for i in range(len(self.known_shells)):
-            if self.known_shells[i]:
-                if board._shotgun[i]:
-                    c_live -= 1
-                else:
-                    c_blank -= 1
-        
-        if c_live == 0 or c_blank == 0:
-            return True
-        
-        return False        
-       
+    
+    def shell_at(self, idx, board: BuckshotRoulette) -> Literal[True, False, None]:
+        if self.known_shells[idx]:
+            return board._shotgun[idx]
+        else:
+            live = sum([int(x) for x in board._shotgun])
+            blank = len(board._shotgun) - live
+            
+            if live == 0:
+                return False
+            elif blank == 0:
+                return True
+            
+            for i in range(len(self.known_shells)):
+                if self.known_shells[i]:
+                    if board._shotgun[i]:
+                        live -= 1
+                    else:
+                        blank -= 1
+            
+            if live == 0:
+                return False
+            elif blank == 0:
+                return True
+            
+            return None        
+    
     def choice(self, board: BuckshotRoulette):
         if self.known_shells == None:
             self.known_shells = [False] * len(board._shotgun)
             self.known_shells[-1] = True
-        list_diff = len(self.known_shells) - len(board._shotgun)
-        if list_diff < 0:
-            self.known_shells.extend([False] * -list_diff)
-        if list_diff > 0:
-            # Should basically never be a difference > 1
-            self.known_shells = self.known_shells[list_diff:]
+        while len(self.known_shells) > len(board._shotgun):
+            self.known_shells = self.known_shells[1:]
+        while len(self.known_shells) < len(board._shotgun):
+            self.known_shells.append(False)
         
-        if self.known_shell == None:
-            if self._figure_out_shell(board):
-                self.known_shells[0] = True
-                if board._shotgun[0]:
-                    self.known_shell = True
-                    self.target = 'op'
-                else:
-                    self.known_shell = False
-                    self.target = 'self'
-        
-        if len(board._shotgun) == 1:
-            self.known_shell = board._shotgun[0]
-            self.target = 'op' if self.known_shell else 'self'
-        
-        using_medicine = None
+        moves = board.moves()
+        own_moves = moves.copy()
+        if 'adrenaline' in moves:
+            for item in board.items[1 - self.me]:
+                if item not in moves:
+                    moves.append(item)
         wants_to_use = None
         
-        moves = board.legal_items()
-        for item in board.POSSIBLE_ITEMS:
-            if item in moves and board.items[self.me][item] < 1 and (board.items[self.me].adrenaline < 1 or board.items[1][item] < 1):
-                moves.remove(item)
-            
+        using_medicine = False
+        
         for item in moves:
-            if item == 'magnifying_glass' and self.known_shell == None and len(board._shotgun) != 1:
+            if item == 'magnifying_glass' and not self.known_shells[0] and len(board._shotgun) != 1:
                 wants_to_use = item
                 break
             if item == 'cigarettes' and board.charges[self.me] < board.max_charges:
@@ -105,56 +89,50 @@ class Dealer(AbstractEngine):
                 wants_to_use = item
                 using_medicine = True
                 break
-            if item == 'beer' and self.known_shell != True and len(board._shotgun) != 1:
+            if item == 'beer' and self.shell_at(0, board) != True and len(board._shotgun) != 1:
                 wants_to_use = item
-                self.known_shell = None
                 break
             if item == 'handcuffs' and len(board._shotgun) != 1:
                 wants_to_use = item
                 break
-            if item == 'saw' and self.known_shell == True:
+            if item == 'saw' and self.shell_at(0, board) == True:
                 wants_to_use = item
                 break
             if item == 'burner_phone' and len(board._shotgun) > 2:
                 wants_to_use = item
                 break
-            if item == 'inverter' and self.known_shell == False:
-                wants_to_use = item
-                self.known_shell = True                
+            if item == 'inverter' and self.shell_at(0, board) == False:
+                wants_to_use = item        
                 break
-
-        if wants_to_use == None and 'saw' in moves and self.known_shell == True:
-            decision = random.random() > 0.5
-            if decision:
-                self.target = 'self'
-            else:
-                self.target = 'op'
-                wants_to_use = 'saw'
-        if wants_to_use != None:
-            if 'adrenaline' in moves and board.items[self.me][wants_to_use] < 1:
-                return 'adrenaline'
-            return wants_to_use        
-        else:
-            if self.target == None:
-                decision = random.random() > 0.5
-                if decision:
+        
+        if wants_to_use == None:
+            if len(board._shotgun) == 1 or self.shell_at(0, board) != None:
+                if board._shotgun[0]:
                     return 'op'
                 else:
                     return 'self'
             else:
-                return self.target
+                return 'op' if random.random() > 0.5 else 'self'
+        else:
+            if wants_to_use in own_moves:
+                return wants_to_use
+            elif 'adrenaline' in own_moves:
+                return 'adrenaline'
+            else:
+                # Should never happen
+                raise RuntimeError("Attempted invalid move without adrenaline")
     
     def post(self, last_move, move_result):        
-        if last_move in ['op', 'self']:
-            self.target = None
-            
         match last_move:
+            case 'op', 'self':
+                self.known_shells = self.known_shells[1:] if len(self.known_shells) > 0 else []
+                pass
             case 'magnifying_glass':
                 self.known_shells[0] = True
-                self.known_shell = move_result
-                pass
             case 'burner_phone':
                 self.known_shells[move_result[0]] = True
+            
+            
         
 class Random(AbstractEngine):
     def __init__(self, playing_as):

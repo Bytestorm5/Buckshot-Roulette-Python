@@ -29,6 +29,12 @@ class Items():
     def __iter__(self):
         return ItemIterable(self)
 
+    def __str__(self):
+        items = ', '.join(f'{key}={self[key]}' for key in self if self[key] > 0)
+        return f"Items({items})"
+
+    def __repr__(self):
+        return self.__str__()
 class ItemIterable():
     def __init__(self, data: Items):
         self.data: Items = data
@@ -53,9 +59,9 @@ class ItemIterable():
 class BuckshotRoulette:
     POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw', 'inverter', 'burner_phone', 'meds', 'adrenaline']
     ITEM_CAPS = Items(handcuffs=1, magnifying_glass=3, beer=2, cigarettes=1, saw=3, inverter=8, burner_phone=1, meds=1, adrenaline=2)
-    def __init__(self, charge_count, total_rounds = None, live_rounds = None):
-        self.max_charges = charge_count
-        self.charges = [charge_count, charge_count]
+    def __init__(self, charge_count = None, total_rounds = None, live_rounds = None):
+        self.max_charges = charge_count if charge_count else random.randint(2, 4)
+        self.charges = [self.max_charges, self.max_charges]
         self.current_turn = 0
         
         total = total_rounds if total_rounds else random.randint(2, 8)
@@ -80,8 +86,8 @@ class BuckshotRoulette:
 
     def new_rounds(self, drop_items = True):
         total = random.randint(2, 8)
-        live = random.randint(1, total-1)
-        self._shotgun = ([True] * live) + ([False * (total - live)])
+        live = total // 2
+        self._shotgun = ([True] * live) + ([False] * (total - live))
         random.shuffle(self._shotgun)
         if drop_items:
             self.give_items(random.randint(2, 5))
@@ -221,7 +227,7 @@ class BuckshotRoulette:
             case 'meds':
                 items.meds -= 1
                 if random.random() > 0.5:
-                    self.charges[self.current_turn] = max(self.charges[self.current_turn] + 2, self.max_charges)
+                    self.charges[self.current_turn] = min(self.charges[self.current_turn] + 2, self.max_charges)
                 else:
                     self.charges[self.current_turn] -= 1
             case 'adrenaline':

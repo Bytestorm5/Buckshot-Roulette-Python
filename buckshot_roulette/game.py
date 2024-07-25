@@ -74,10 +74,15 @@ class BuckshotGame:
                 print("\n\n------------------------------------------------------------")
                 print(f"player {board.current_turn}")
             move = player.choice(board)
-            res, shotgun = board.make_move(move, shotgun)
-            if itemsused:
-                print(f"{move} : {res}")
-            player.post(move, res)
+            if type(move) == str:
+                move = move.split(" ")
+            for mov in move:
+                res, shotgun = board.make_move(mov, shotgun)
+                if res == "INVALID_MOVE":
+                    break
+                if itemsused:
+                    print(f"{move} : {res}")
+                player.post(mov, res)
         
         if celebrate:
             print("player",board.winner(),"wins!")
@@ -262,6 +267,8 @@ class BuckshotRoulette:
             case 'adrenaline':
                 items.adrenaline -= 1
                 self._active_items.adrenaline += 1
+            case _:
+                out_val = "INVALID_MOVE"
                     
         
         if load_new and len(shotgun) == 0:

@@ -61,7 +61,7 @@ class BuckshotGame:
         self.engine0 = engine0
         self.engine1 = engine1
 
-    def play(self, starter = 0, charges=4, celebrate = True):
+    def play(self, starter = 0, charges=4, celebrate = True, itemsused = True):
         board = BuckshotRoulette(starter, charge_count=charges)
         shotgun = ([True] * board.live) + ([False] * (board.total - board.live))
         random.shuffle(shotgun)
@@ -70,8 +70,13 @@ class BuckshotGame:
                 shotgun = ([True] * board.live) + ([False] * (board.total - board.live))
                 random.shuffle(shotgun)
             player = self.engine0 if board.current_turn == 0 else self.engine1
+            if itemsused:
+                print("\n\n------------------------------------------------------------")
+                print(f"player {board.current_turn}")
             move = player.choice(board)
             res, shotgun = board.make_move(move, shotgun)
+            if itemsused:
+                print(f"{move} : {res}")
             player.post(move, res)
         
         if celebrate:
@@ -147,9 +152,6 @@ class BuckshotRoulette:
     def fire(self, shotgun, at_opponent=True) -> None:
         target = (self.current_turn + at_opponent) % 2
         is_hit = shotgun[0]
-        self.total -= 1
-        if is_hit:
-            self.live -= 1
         shotgun = shotgun[1:]
         self.chamber_public = None
         
@@ -231,7 +233,6 @@ class BuckshotRoulette:
                 self.chamber_public = shotgun[0]
             case 'beer':
                 items.beer -= 1
-                self.total -= 1
                 if len(shotgun) > 1:
                     val = shotgun[0]
                     shotgun = shotgun[1:]
@@ -268,6 +269,9 @@ class BuckshotRoulette:
             self.new_rounds()
             return out_val, shotgun
         
+        if move != 'inverter':
+            self.total = len(shotgun)
+            self.live = sum(shotgun)
         return out_val, shotgun
     
     def switch_turn(self):

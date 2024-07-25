@@ -57,7 +57,7 @@ class Dealer(AbstractEngine):
             elif blank == 0:
                 return True
             
-            return None        
+            return None
     
     def choice(self, board: BuckshotRoulette):
         if self.known_shells == None:
@@ -144,3 +144,87 @@ class Random(AbstractEngine):
 
     def post(self, last_move, res):
         pass
+
+class Human(AbstractEngine):
+    def __init__(self, playing_as, knowledge = True):
+        self.knowledge = knowledge
+        self.known_shells: list[bool] = None
+    
+    def shell_at(self, idx, board: BuckshotRoulette) -> Literal[True, False, None]:
+        if self.known_shells == None:
+            self.known_shells = [None] * board.total
+            if board.total == 1:
+                self.known_shells[0] = board.live > 0
+        while len(self.known_shells) > board.total:
+            self.known_shells = self.known_shells[1:]
+        while len(self.known_shells) < board.total:
+            self.known_shells.append(None)
+        
+        if self.known_shells[idx] != None:
+            return self.known_shells[idx]
+        else:
+            live = board.live
+            blank = board.total - board.live
+            
+            if live == 0:
+                return False
+            elif blank == 0:
+                return True
+            
+            for i in range(len(self.known_shells)):
+                if self.known_shells[i] != None:
+                    if self.known_shells[i]:
+                        live -= 1
+                    else:
+                        blank -= 1
+            
+            if live == 0:
+                return False
+            elif blank == 0:
+                return True
+            
+            return None
+    
+    def choice(self, board: BuckshotRoulette):
+        selfhealth = board.charges[board.current_turn]
+        opphealth = board.charges[1-board.current_turn]
+        moves = board.moves()
+        
+        print(f'''\
+your move.
+charges:
+self   : other
+{'🗲'*selfhealth + ' '*(6-selfhealth)} : {'🗲'*opphealth + ' '*(6-opphealth)}
+
+items (self):
+{board.items[board.current_turn]}
+
+items (enemy):
+{board.items[1-board.current_turn]}
+
+active items:
+{board._active_items}
+
+{board.total} bullets left
+''')
+        if self.knowledge:
+            print(f"{board.live} live. {board.total-board.live} blank")
+            shells = [self.shell_at(i, board) for i in range(board.total)]
+            shells = [{True: "L", False: "B", None: "?"}[x] for x in shells]
+            print("".join(shells))
+        print(f"moves:\n{moves}")
+        chosen = ""
+        while chosen not in moves:
+            chosen = input("Move:").strip()
+        
+        return chosen
+
+    def post(self, last_move, move_result):
+        #print(f"result: {move_result}")
+        match last_move:
+            case 'op', 'self':
+                self.known_shells = self.known_shells[1:] if len(self.known_shells) > 0 else []
+            case 'magnifying_glass':
+                self.known_shells[0] = move_result
+            case 'burner_phone':
+                self.known_shells[move_result[0]] = move_result[1]

@@ -34,11 +34,11 @@ class Dealer(AbstractEngine):
         self.known_shells: list[bool] = None
     
     def shell_at(self, idx, board: BuckshotRoulette) -> Literal[True, False, None]:
-        if self.known_shells[idx]:
-            return board._shotgun[idx]
+        if self.known_shells[idx] != None:
+            return self.known_shells[idx]
         else:
-            live = sum([int(x) for x in board._shotgun])
-            blank = len(board._shotgun) - live
+            live = board.live
+            blank = board.total - board.live
             
             if live == 0:
                 return False
@@ -46,8 +46,8 @@ class Dealer(AbstractEngine):
                 return True
             
             for i in range(len(self.known_shells)):
-                if self.known_shells[i]:
-                    if board._shotgun[i]:
+                if self.known_shells[i] != None:
+                    if self.known_shells[i]:
                         live -= 1
                     else:
                         blank -= 1
@@ -61,12 +61,13 @@ class Dealer(AbstractEngine):
     
     def choice(self, board: BuckshotRoulette):
         if self.known_shells == None:
-            self.known_shells = [False] * len(board._shotgun)
-            self.known_shells[-1] = True
-        while len(self.known_shells) > len(board._shotgun):
+            self.known_shells = [None] * board.total
+            if board.total == 1:
+                self.known_shells[0] = board.live > 0
+        while len(self.known_shells) > board.total:
             self.known_shells = self.known_shells[1:]
-        while len(self.known_shells) < len(board._shotgun):
-            self.known_shells.append(False)
+        while len(self.known_shells) < board.total:
+            self.known_shells.append(None)
         
         moves = board.moves()
         own_moves = moves.copy()
@@ -79,7 +80,7 @@ class Dealer(AbstractEngine):
         using_medicine = False
         
         for item in moves:
-            if item == 'magnifying_glass' and not self.known_shells[0] and len(board._shotgun) != 1:
+            if item == 'magnifying_glass' and not self.known_shells[0] and board.total != 1:
                 wants_to_use = item
                 break
             if item == 'cigarettes' and board.charges[self.me] < board.max_charges:
@@ -89,16 +90,16 @@ class Dealer(AbstractEngine):
                 wants_to_use = item
                 using_medicine = True
                 break
-            if item == 'beer' and self.shell_at(0, board) != True and len(board._shotgun) != 1:
+            if item == 'beer' and self.shell_at(0, board) != True and board.total != 1:
                 wants_to_use = item
                 break
-            if item == 'handcuffs' and len(board._shotgun) != 1:
+            if item == 'handcuffs' and board.total != 1:
                 wants_to_use = item
                 break
             if item == 'saw' and self.shell_at(0, board) == True:
                 wants_to_use = item
                 break
-            if item == 'burner_phone' and len(board._shotgun) > 2:
+            if item == 'burner_phone' and board.total > 2:
                 wants_to_use = item
                 break
             if item == 'inverter' and self.shell_at(0, board) == False:
@@ -106,8 +107,8 @@ class Dealer(AbstractEngine):
                 break
         
         if wants_to_use == None:
-            if len(board._shotgun) == 1 or self.shell_at(0, board) != None:
-                if board._shotgun[0]:
+            if board.total == 1 or self.shell_at(0, board) != None:
+                if self.shell_at(0, board):
                     return 'op'
                 else:
                     return 'self'
@@ -128,9 +129,9 @@ class Dealer(AbstractEngine):
                 self.known_shells = self.known_shells[1:] if len(self.known_shells) > 0 else []
                 pass
             case 'magnifying_glass':
-                self.known_shells[0] = True
+                self.known_shells[0] = move_result
             case 'burner_phone':
-                self.known_shells[move_result[0]] = True
+                self.known_shells[move_result[0]] = move_result[1]
             
             
         

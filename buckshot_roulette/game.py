@@ -67,6 +67,8 @@ class BuckshotGame:
         random.shuffle(shotgun)
         while board.winner() == None:
             if len(shotgun) == 0:
+                self.engine0.on_reload(board)
+                self.engine1.on_reload(board)
                 shotgun = ([True] * board.live) + ([False] * (board.total - board.live))
                 random.shuffle(shotgun)
             player = self.engine0 if board.current_turn == 0 else self.engine1

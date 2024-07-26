@@ -27,6 +27,14 @@ class AbstractEngine(abc.ABC):
             result (Any): The output of board.make_move
         """
         pass
+    
+    @abc.abstractsmethod
+    def on_reload(self, board:BuckshotRoulette):
+        """Any internal steps to perform on a reload (like resetting knowledge)
+        
+        Args:
+            board (BuckshotRoulette): The new game state
+        """
 
 class Dealer(AbstractEngine):
     def __init__(self, playing_as: Literal[0, 1]):   
@@ -135,6 +143,10 @@ class Dealer(AbstractEngine):
                 self.known_shells[0] = move_result
             case 'burner_phone':
                 self.known_shells[move_result[0]] = move_result[1]
+    
+    def on_reload(self, board: BuckshotRoulette):
+        self.last_shell = None
+        self.known_shells = None
             
             
         
@@ -146,6 +158,9 @@ class Random(AbstractEngine):
         return random.choice(board.moves())
 
     def post(self, last_move, res):
+        pass
+    
+    def on_reload(self, board: BuckshotRoulette):
         pass
 
 class Human(AbstractEngine):
@@ -231,3 +246,6 @@ active items:
                 self.known_shells[0] = move_result
             case 'burner_phone':
                 self.known_shells[move_result[0]] = move_result[1]
+    
+    def on_reload(self, board: BuckshotRoulette):
+        self.known_shells = None

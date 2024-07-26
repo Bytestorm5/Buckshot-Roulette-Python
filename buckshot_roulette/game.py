@@ -1,7 +1,7 @@
 import random
 from dataclasses import dataclass, astuple
 import copy
-
+from buckshot_roulette.ai import Dealer
 @dataclass(init=True)
 class Items():
     handcuffs: int = 0
@@ -56,21 +56,58 @@ class ItemIterable():
         else:
             raise StopIteration
 
+class BuckshotGame:
+    def __init__(self, engine0, engine1):
+        self.engine0 = engine0
+        self.engine1 = engine1
+
+    def play(self, starter = 0, charges=4, celebrate = True, itemsused = True):
+        board = BuckshotRoulette(starter, charge_count=charges)
+        shotgun = ([True] * board.live) + ([False] * (board.total - board.live))
+        random.shuffle(shotgun)
+        while board.winner() == None:
+            if len(shotgun) == 0:
+                self.engine0.on_reload(board)
+                self.engine1.on_reload(board)
+                shotgun = ([True] * board.live) + ([False] * (board.total - board.live))
+                random.shuffle(shotgun)
+            player = self.engine0 if board.current_turn == 0 else self.engine1
+            if isinstance(player, Dealer):
+                player.last_shell = shotgun[-1]
+            if itemsused:
+                print("\n\n------------------------------------------------------------")
+                print(f"player {board.current_turn}")
+            move = player.choice(board)
+            if type(move) == str:
+                move = move.split(" ")
+            for mov in move:
+                res, shotgun = board.make_move(mov, shotgun)
+                if res == "INVALID_MOVE":
+                    break
+                if itemsused:
+                    print(f"{move} : {res}")
+                player.post(mov, res)
+        
+        if celebrate:
+            print("player", board.winner(), "wins!")
+        return board.winner()
+    
 class BuckshotRoulette:
     POSSIBLE_ITEMS = ['handcuffs', 'magnifying_glass', 'beer', 'cigarettes', 'saw', 'inverter', 'burner_phone', 'meds', 'adrenaline']
     ITEM_CAPS = Items(handcuffs=1, magnifying_glass=3, beer=2, cigarettes=1, saw=3, inverter=8, burner_phone=1, meds=1, adrenaline=2)
-    def __init__(self, charge_count = None, total_rounds = None, live_rounds = None):
+    def __init__(self, starter = 0, charge_count = None, total_rounds = None, live_rounds = None):
         self.max_charges = charge_count if charge_count else random.randint(2, 4)
         self.charges = [self.max_charges, self.max_charges]
-        self.current_turn = 0
+        self.starter = starter
+        self.current_turn = starter
         
-        total = total_rounds if total_rounds else random.randint(2, 8)
-        live = total // 2 if live_rounds == None else live_rounds
-        if live > total:
+        self.total = total_rounds if total_rounds else random.randint(2, 8)
+        self.live = self.total // 2 if live_rounds == None else live_rounds
+        if self.live > self.total:
             raise ValueError("Live Rounds must be less than Total Rounds")
         
-        self._shotgun = ([True] * live) + ([False * (total - live)])
-        random.shuffle(self._shotgun)
+        #self._shotgun = ([True] * live) + ([False * (total - live)])
+        #random.shuffle(self._shotgun)
         
         self.items: list[Items] = [
             Items(),
@@ -82,13 +119,13 @@ class BuckshotRoulette:
         self._skip_next = False
         
         self.chamber_public = None
-        self.give_items(random.randint(2, 5))       
+        self.give_items(random.randint(2, 5))
 
     def new_rounds(self, drop_items = True):
-        total = random.randint(2, 8)
-        live = total // 2
-        self._shotgun = ([True] * live) + ([False] * (total - live))
-        random.shuffle(self._shotgun)
+        self.total = random.randint(2, 8)
+        self.live = self.total // 2
+        #self._shotgun = ([True] * self.live) + ([False] * (self.total - self.live))
+        #random.shuffle(self._shotgun)
         if drop_items:
             self.give_items(random.randint(2, 5))
     
@@ -108,9 +145,9 @@ class BuckshotRoulette:
             for item in items:
                 player[item] += 1
     
-    def shotgun_info(self):
-        live = sum([1 if x else 0 for x in self._shotgun])
-        return live, len(self._shotgun)
+#    def shotgun_info(self):
+#        live = sum([1 if x else 0 for x in self._shotgun])
+#        return live, len(self._shotgun)
     
     def winner(self) -> int | None:
         # Ties are impossible so we don't account for that
@@ -121,10 +158,10 @@ class BuckshotRoulette:
         else:
             return None        
         
-    def fire(self, at_opponent=True) -> None:
+    def fire(self, shotgun, at_opponent=True) -> None:
         target = (self.current_turn + at_opponent) % 2
-        is_hit = self._shotgun[0]
-        self._shotgun = self._shotgun[1:]
+        is_hit = shotgun[0]
+        shotgun = shotgun[1:]
         self.chamber_public = None
         
         def switch():
@@ -147,12 +184,12 @@ class BuckshotRoulette:
                 damage = 2
             self.charges[target] -= damage
             switch()
-            return damage
+            return damage, shotgun
         elif at_opponent: # Missed against opponent
             switch()
-            return 0
+            return 0, shotgun
         else: # Shot at self and missed
-            return 0
+            return 0, shotgun
     
     def legal_items(self) -> list[str]:
         """All items that could be used in the current board state, regardless of whether the player currently has them
@@ -182,7 +219,7 @@ class BuckshotRoulette:
             return self.moves()            
         return moves
 
-    def make_move(self, move, load_new = True):
+    def make_move(self, move, shotgun, load_new = True):
         out_val = None
         if self._active_items.adrenaline > 0:
             items = self.items[self.opponent()]
@@ -191,25 +228,26 @@ class BuckshotRoulette:
             items = self.items[self.current_turn]
         match move:
             case 'op':
-                out_val = self.fire(at_opponent=True)
+                out_val, shotgun = self.fire(shotgun, at_opponent=True)
             case 'self':
-                out_val = -self.fire(at_opponent=False)
+                out_val, shotgun = self.fire(shotgun, at_opponent=False)
+                out_val = -out_val
             case 'handcuffs':
                 items.handcuffs -= 1
                 self._active_items.handcuffs += 1
                 self._skip_next = True
             case 'magnifying_glass':
                 items.magnifying_glass -= 1
-                out_val = self._shotgun[0]
-                self.chamber_public = self._shotgun[0]
+                out_val = shotgun[0]
+                self.chamber_public = shotgun[0]
             case 'beer':
                 items.beer -= 1
-                if len(self._shotgun) > 1:
-                    val = self._shotgun[0]
-                    self._shotgun = self._shotgun[1:]
+                if len(shotgun) > 1:
+                    val = shotgun[0]
+                    shotgun = shotgun[1:]
                     out_val = val
                 else:
-                    self._shotgun = []
+                    shotgun = []
             case 'cigarettes':
                 items.cigarettes -= 1
                 self.charges[self.current_turn] = min(self.charges[self.current_turn]+1, self.max_charges)
@@ -218,12 +256,12 @@ class BuckshotRoulette:
                 self._active_items.saw += 1
             case 'inverter':
                 items.inverter -= 1
-                self._shotgun[0] = not self._shotgun[0]
+                shotgun[0] = not shotgun[0]
             case 'burner_phone':
                 items.burner_phone -= 1
-                if len(self._shotgun) > 1:
-                    idx = random.randint(1, len(self._shotgun)-1)
-                    out_val = (idx, self._shotgun[idx])
+                if len(shotgun) > 1:
+                    idx = random.randint(1, len(shotgun)-1)
+                    out_val = (idx, shotgun[idx])
             case 'meds':
                 items.meds -= 1
                 if random.random() > 0.5:
@@ -233,17 +271,19 @@ class BuckshotRoulette:
             case 'adrenaline':
                 items.adrenaline -= 1
                 self._active_items.adrenaline += 1
+            case _:
+                out_val = "INVALID_MOVE"
                     
         
-        if load_new and len(self._shotgun) == 0:
-            self.current_turn = 0
+        if load_new and len(shotgun) == 0:
+            self.current_turn = self.starter
             self.new_rounds()
-            return out_val
+            return out_val, shotgun
         
-        return out_val
-    
-    def live_round(self):
-        return self._shotgun[0]
+        if move != 'inverter':
+            self.total = len(shotgun)
+            self.live = sum(shotgun)
+        return out_val, shotgun
     
     def switch_turn(self):
         #self._active_items = {'handcuffs': 0, 'magnifying_glass': 0, 'beer': 0, 'cigarettes': 0, 'saw': 0}

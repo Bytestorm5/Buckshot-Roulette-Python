@@ -1,17 +1,23 @@
-from buckshot_roulette.game import BuckshotRoulette
-from buckshot_roulette.ai import Dealer, Random
+from buckshot_roulette.game import BuckshotRoulette, BuckshotGame
+from buckshot_roulette.ai import *
 
-p1_wins = 0
-for _ in range(1, 100000):
-    board = BuckshotRoulette(4)
-    engine1 = Random(0)
-    engine2 = Dealer(1)
-    while board.winner() == None:
-        player = engine1 if board.current_turn == 0 else engine2
-        move = player.choice(board)
-        res = board.make_move(move)
-        player.post(move, res)
-    if board.winner() == 0:
-        p1_wins += 1
-    print(f"[{_}] Player {board.winner()+1} Wins! {100*p1_wins / _:.2f}%")
-    #print(board.items)
+
+
+if True:
+    # ai vs ai
+    engine0 = Random(0)
+    engine1 = Dealer(1)
+    game = BuckshotGame(engine0, engine1)
+    p1_wins = 0
+    n = 10000
+    for i in range(1,n+1):
+        p1_wins += game.play(charges = 4, celebrate= False, itemsused= False)
+    print(f"the dealer has a {100*p1_wins / n:.2f}% win rate")
+
+if False:
+    # human vs dealer
+    # ai vs ai
+    engine0 = Human(0, knowledge=True)
+    engine1 = Dealer(1)
+    game = BuckshotGame(engine0, engine1)
+    p1_wins += game.play(charges = 4, celebrate= True, itemsused= True)

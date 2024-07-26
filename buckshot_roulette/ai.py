@@ -32,6 +32,7 @@ class Dealer(AbstractEngine):
     def __init__(self, playing_as: Literal[0, 1]):   
         self.me = playing_as     
         self.known_shells: list[bool] = None
+        self.last_shell = None
     
     def shell_at(self, idx, board: BuckshotRoulette) -> Literal[True, False, None]:
         if self.known_shells[idx] != None:
@@ -61,7 +62,9 @@ class Dealer(AbstractEngine):
     
     def choice(self, board: BuckshotRoulette):
         if self.known_shells == None:
-            self.known_shells = [None] * board.total
+            self.known_shells = [None] * board.total     
+            # The dealer always knows the last shell
+            self.known_shells[-1] = self.last_shell    
             if board.total == 1:
                 self.known_shells[0] = board.live > 0
         while len(self.known_shells) > board.total:

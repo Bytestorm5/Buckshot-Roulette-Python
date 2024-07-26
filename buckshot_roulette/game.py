@@ -1,7 +1,7 @@
 import random
 from dataclasses import dataclass, astuple
 import copy
-
+from buckshot_roulette.ai import Dealer
 @dataclass(init=True)
 class Items():
     handcuffs: int = 0
@@ -70,6 +70,8 @@ class BuckshotGame:
                 shotgun = ([True] * board.live) + ([False] * (board.total - board.live))
                 random.shuffle(shotgun)
             player = self.engine0 if board.current_turn == 0 else self.engine1
+            if isinstance(player, Dealer):
+                player.last_shell = shotgun[-1]
             if itemsused:
                 print("\n\n------------------------------------------------------------")
                 print(f"player {board.current_turn}")
@@ -85,7 +87,7 @@ class BuckshotGame:
                 player.post(mov, res)
         
         if celebrate:
-            print("player",board.winner(),"wins!")
+            print("player", board.winner(), "wins!")
         return board.winner()
     
 class BuckshotRoulette:

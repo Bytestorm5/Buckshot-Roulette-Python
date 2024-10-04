@@ -294,11 +294,16 @@ class BuckshotRoulette:
 
     def copy(self):
         new_board = BuckshotRoulette(charge_count=0)  # Temporary charge count; will be overwritten
+        new_board.max_charges = self.max_charges
         new_board.charges = self.charges[:]
+        new_board.starter = self.starter
         new_board.current_turn = self.current_turn
-        new_board._shotgun = self._shotgun[:]
+        new_board.total = self.total
+        new_board.live = self.live
         new_board.items = copy.deepcopy(self.items)        
         new_board._active_items = copy.deepcopy(self._active_items)
+        new_board._skip_next = self._skip_next
+        new_board.chamber_public = self.chamber_public
         return new_board
     
     def __eq__(self, other):
@@ -309,7 +314,8 @@ class BuckshotRoulette:
         return (self.max_charges == other.max_charges and
                 self.charges == other.charges and
                 self.current_turn == other.current_turn and
-                self._shotgun == other._shotgun and
+                self.total == other.total and
+                self.live == other.live and
                 self.items == other.items and
                 self._active_items == other._active_items and
                 self._skip_next == other._skip_next and
@@ -329,8 +335,10 @@ class BuckshotRoulette:
         return {
             "max_charges": self.max_charges,
             "charges": self.charges,
+            "starter": self.starter,
             "current_turn": self.current_turn,
-            "shotgun": self._shotgun,
+            "total": self.total,
+            "live": self.live,
             "items": self.items,
             "active_items": self._active_items,
             "skip_next": self._skip_next,

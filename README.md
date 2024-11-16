@@ -7,6 +7,13 @@ A Buckshot Roulette library ([PyPI](https://pypi.org/project/buckshot-roulette/)
 
 Mainly intended for use in developing engines to play the game optimally.
 
+## Sources
+Code in this library is developed to match the behaviors of the actual game, using source code decompiled by [thecatontheceiling](https://github.com/thecatontheceiling).
+
+[Source Code for Singleplayer](https://github.com/thecatontheceiling/buckshotroulette)
+
+[Source Code for Multiplayer](https://github.com/thecatontheceiling/buckshotroulette_multiplayer)
+
 ## Quickstart
 ```
 pip install buckshot-roulette

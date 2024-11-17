@@ -148,7 +148,7 @@ class Dealer(AbstractEngine):
                 wants_to_use = item
                 wants_to_target = target
                 break
-            if item == 'beer' and self.shell_at(0, game) != True and game.total != 1:
+            if item == 'beer' and self.shell_at(0, game) != True and True in self.known_shells and game.total != 1:
                 wants_to_use = item
                 wants_to_target = target
                 break

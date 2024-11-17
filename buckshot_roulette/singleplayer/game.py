@@ -1,7 +1,7 @@
 import random
 from dataclasses import dataclass, astuple
 import copy
-from buckshot_roulette.ai import Dealer
+from buckshot_roulette.singleplayer.ai import Dealer
 @dataclass(init=True)
 class Items():
     handcuffs: int = 0

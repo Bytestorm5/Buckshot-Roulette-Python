@@ -1,4 +1,4 @@
-from buckshot_roulette.game import BuckshotRoulette
+from buckshot_roulette.singleplayer.game import BuckshotRoulette
 from typing import Literal
 from dataclasses import asdict
 import random

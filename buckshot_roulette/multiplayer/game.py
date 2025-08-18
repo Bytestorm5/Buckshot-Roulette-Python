@@ -244,6 +244,9 @@ class BuckshotRoulette:
         # Can be flipped by remote
         self.turn_inc = 1
         
+        # Active during Inverter Uncertainty
+        self._freeze_until_shot = False
+        
         self.items: list[Items] = [Items() for _ in range(player_count)]
         
         self.statuses: set[GameStatus] = set()
@@ -255,15 +258,17 @@ class BuckshotRoulette:
     # Key is player count, Value is a list of tuples in format (live, blank)
     # From mp_main.tscn    
     
-    def next_sequence(self, drop_items = True):
+    def next_sequence(self, drop_items=True):
         self.statuses = set()
         self.sequence_idx = (self.sequence_idx + 1) % len(self.config.sequences)
         new_sequence = self.config.sequences[self.sequence_idx]
         self.total = new_sequence.live + new_sequence.blank
         self.live = new_sequence.live
+        self.blank = new_sequence.blank
+        self._freeze_until_shot = False
         if drop_items:
             self.give_items(new_sequence.item_count)
-    
+        
     def give_items(self, item_count):
         global_count = Items()
         for player in self.items:
@@ -321,6 +326,8 @@ class BuckshotRoulette:
         return None
     
     def moves(self):
+        # Outputs moves in the format (adrenaline_target_index, item)
+        # adrenaline target is a global index
         if GameStatus.ADRENALINE_ACTIVE in self.statuses:
             moves = [] # Player MUST pick an opponent's item
             opponents = self.living_players()
@@ -340,7 +347,8 @@ class BuckshotRoulette:
             # Player may shoot any one of the currently living players
             players = self.living_players(as_offset=True)
             for player in players:
-                moves.append((0, f'shoot_{player}'))
+                moves.append((self.current_turn, f'shoot_{player}'))
+            player = self.current_turn
             # Item Uses
             items = self.items[self.current_turn]
             for item in items:
@@ -381,8 +389,19 @@ class BuckshotRoulette:
             target = self.offset_to_idx(idx)
             damage = 1 if is_live else 0
             self.total -= 1
-            if is_live:
-                self.live -= 1
+            # Update live/blank counts
+            if (GameStatus.INVERTER_UNCERTAINTY in self.statuses) or getattr(self, "_freeze_until_shot", False):
+                if GameStatus.INVERTER_UNCERTAINTY in self.statuses:
+                    self.statuses.remove(GameStatus.INVERTER_UNCERTAINTY)
+                self._freeze_until_shot = False
+                # After consuming the shell, reflect the true remaining counts
+                self.live = sum(1 for b in shotgun if b)
+                self.blank = len(shotgun) - self.live
+            else:
+                if is_live:
+                    self.live -= 1
+                else:
+                    self.blank -= 1
             if GameStatus.SAWED_OFF in self.statuses:
                 self.statuses.remove(GameStatus.SAWED_OFF)
                 damage *= 2
@@ -423,10 +442,29 @@ class BuckshotRoulette:
                     self.charges[self.current_turn] = min(self.charges[self.current_turn]+1, self.config.start_charges)
                 case 'beer':
                     items.beer -= 1
-                    if len(shotgun) > 1:
+                    if len(shotgun) >= 1:
                         val = shotgun[0]
                         shotgun = shotgun[1:]
-                        out_val = val, val, shotgun
+                        self.total -= 1
+                        # If inverter uncertainty is active, removing the chambered shell resolves it,
+                        # just like taking a shot: clear uncertainty and reveal true counts.
+                        if (GameStatus.INVERTER_UNCERTAINTY in self.statuses) or getattr(self, "_freeze_until_shot", False):
+                            if GameStatus.INVERTER_UNCERTAINTY in self.statuses:
+                                self.statuses.remove(GameStatus.INVERTER_UNCERTAINTY)
+                            self._freeze_until_shot = False
+                            # Recount from the remaining shells so live/blank are truthful again.
+                            self.live = sum(1 for b in shotgun if b)
+                            self.blank = len(shotgun) - self.live
+                        else:
+                            # Normal beer behavior: adjust counts for the discarded top shell.
+                            if val:
+                                self.live -= 1
+                            else:
+                                self.blank -= 1
+                        if len(shotgun) > 0:
+                            out_val = val, val, shotgun
+                        else:
+                            out_val = None, None, shotgun
                     else:
                         shotgun = []
                         out_val = None, None, shotgun
@@ -442,6 +480,7 @@ class BuckshotRoulette:
                     items.inverter -= 1
                     shotgun[0] = not shotgun[0]
                     self.statuses.add(GameStatus.INVERTER_UNCERTAINTY)
+                    self._freeze_until_shot = True
                 case 'remote':
                     items.remote -= 1
                     self.turn_inc *= -1

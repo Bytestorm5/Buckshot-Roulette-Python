@@ -119,10 +119,8 @@ class Dealer(AbstractEngine):
         wants_to_use = None
         wants_to_target = 0
         # Prioritize item usage based on strategy
-        for move in moves:
+        for target, item in moves:
             # Handle both string and tuple moves
-            target = move[0]
-            item = move[1]
             
             if item == 'magnifying_glass' and not self.shell_at(0, game) and game.total != 1:
                 wants_to_use = item

@@ -99,7 +99,6 @@ def _one_hot(idx: int, size: int) -> List[float]:
         v[idx] = 1.0
     return v
 
-
 def encode_state(game: BuckshotRoulette, me: int, known_shells: List[Optional[bool]]) -> torch.Tensor:
     """Encode *public* game state + my own info into a flat feature vector.
     """
@@ -347,9 +346,10 @@ class RLEngine(AbstractEngine):
         - Shoot live at self: -damage
         - Magnifying glass / beer information is incorporated into memory only.
         """
+        # Update shell knowledge for future feature encoding.
+        self._update_knowledge_after_move(last_move, res)
+        
         if not self.train_mode or not self.traj.steps:
-            # Still update internal knowledge even if not training.
-            self._update_knowledge_after_move(last_move, res)
             return
 
         # Reward shaping from private result structure.
@@ -369,9 +369,6 @@ class RLEngine(AbstractEngine):
 
         # Append reward to the most recent step.
         self.traj.steps[-1].reward += r
-
-        # Update shell knowledge for future feature encoding.
-        self._update_knowledge_after_move(last_move, res)
 
     def on_opponent_move(self, last_move, res):
         if isinstance(last_move, str) and (last_move.startswith("shoot_") or last_move == "beer"):

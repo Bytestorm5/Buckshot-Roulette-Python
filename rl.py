@@ -1,45 +1,11 @@
-"""
-Policy-gradient (actor-critic) self-play trainer for Buckshot Roulette.
-
-- Wraps the provided multiplayer environment (BuckshotRoulette/BuckshotGame).
-- Implements an AbstractEngine-compatible RL agent that can be dropped in
-  alongside the built-in Dealer() or Random() engines.
-- Uses a masked policy over the environment's dynamically generated move list.
-- Learns from per-move shaping rewards and round win/loss bonuses.
-
-Requirements: PyTorch (tested with 2.x). No other external deps.
-
-Run a quick training session (2-player vs Dealer) from the CLI:
-
-    python buckshot_roulette_rl_policy_gradient.py \
-        --episodes 2000 \
-        --players 2 \
-        --hidden 128 \
-        --lr 3e-4 \
-        --gamma 0.99 \
-        --entropy 0.01
-
-Evaluate vs Dealer after training (100 rounds):
-
-    python buckshot_roulette_rl_policy_gradient.py --eval --episodes 100
-
-Notes
------
-- The environment exposes partial information; we deliberately avoid peeking at
-  opponents' item inventories to keep the agent honest. Public info (charges,
-  statuses, live/blank counts) is used, plus the agent's own remembered shell
-  knowledge from tools like magnifying glass / beer / burner phone.
-- The policy scores *candidate moves* using a state encoder and a separate move
-  encoder, then applies a masked softmax over legal moves only.
-- The value head provides a baseline to reduce variance (actor-critic).
-"""
-
 from __future__ import annotations
 import argparse
 import math
 import random
+from collections import deque
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Deque, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -215,20 +181,39 @@ def encode_move(game: BuckshotRoulette, me: int, move_tup: Tuple[int, str]) -> t
 
 # ----------------------------- Policy Network ------------------------------- #
 
+
+def _build_mlp(input_dim: int, hidden_dim: int, layers: int) -> nn.Sequential:
+    if layers < 1:
+        raise ValueError("layers must be >= 1")
+    modules: List[nn.Module] = []
+    prev = input_dim
+    for _ in range(layers):
+        modules.append(nn.Linear(prev, hidden_dim))
+        modules.append(nn.ReLU())
+        prev = hidden_dim
+    return nn.Sequential(*modules)
+
+
 class PolicyNet(nn.Module):
-    def __init__(self, state_dim: int, move_dim: int, hidden: int = 128):
+    def __init__(
+        self,
+        state_dim: int,
+        move_dim: int,
+        hidden_dim: int = 128,
+        hidden_layers: int = 2,
+        skip_connection: bool = False,
+    ):
         super().__init__()
-        self.state = nn.Sequential(
-            nn.Linear(state_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-        )
-        self.move = nn.Sequential(
-            nn.Linear(move_dim, hidden),
-            nn.ReLU(),
-        )
-        self.val_head = nn.Linear(hidden, 1)
+        self.skip_connection = skip_connection
+        self.state = _build_mlp(state_dim, hidden_dim, hidden_layers)
+        self.move = _build_mlp(move_dim, hidden_dim, hidden_layers)
+        if skip_connection:
+            self.state_merge = nn.Linear(hidden_dim + state_dim, hidden_dim)
+            self.move_merge = nn.Linear(hidden_dim + move_dim, hidden_dim)
+        else:
+            self.state_merge = None
+            self.move_merge = None
+        self.val_head = nn.Linear(hidden_dim, 1)
 
     def forward(self, state: torch.Tensor, move_batch: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Score each candidate move and return (logits, value).
@@ -241,6 +226,12 @@ class PolicyNet(nn.Module):
         logit_probe.maybe_add(state_feats=state, move_feats=move_batch)
         s = self.state(state)               # [H]
         mv = self.move(move_batch)          # [K, H]
+        if self.skip_connection:
+            assert self.state_merge is not None and self.move_merge is not None
+            s = torch.cat([s, state], dim=-1)
+            s = self.state_merge(s)
+            mv = torch.cat([mv, move_batch], dim=-1)
+            mv = self.move_merge(mv)
         # Dot-product scorer between state embedding and each move embedding
         logits = (mv * s).sum(dim=1)        # [K]
         value = self.val_head(s).squeeze(-1)  # []
@@ -485,58 +476,104 @@ def play_one_round(engines: List[AbstractEngine], trainer_idx: int, cfg: RoundCo
     return winner_original
 
 
-def make_default_round(player_count: int) -> RoundConfig:
-    return RoundConfig(player_count=player_count)
+def make_default_round(player_count: int, **kwargs) -> RoundConfig:
+    return RoundConfig(player_count=player_count, **kwargs)
 
 
-def train(args: argparse.Namespace):
+def _checkpoint_schedule(total_episodes: int) -> Deque[int]:
+    """Return sorted episode numbers representing each 5% milestone."""
+    if total_episodes <= 0:
+        return deque()
+    fractions = range(5, 101, 5)
+    checkpoints = sorted({max(1, math.ceil(total_episodes * pct / 100.0)) for pct in fractions})
+    return deque(checkpoints)
+
+
+def _checkpoint_directory(model_root: Path, hidden_layers: int, hidden_dim: int, opponent: str) -> Path:
+    folder = model_root / f"model_{hidden_layers}_{hidden_dim}_{opponent}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _save_checkpoint(policy: PolicyNet, directory: Path, hidden_layers: int, hidden_dim: int, opponent: str, episode: int) -> None:
+    name = f"model_{hidden_layers}_{hidden_dim}_{opponent}_{episode}.pt"
+    path = directory / name
+    torch.save(policy.state_dict(), path)
+    print(f"Saved checkpoint to {path}")
+
+
+def train(
+    *,
+    episodes: int,
+    players: int,
+    opponent_type: str,
+    mirror_mode: str,
+    target_update: int,
+    log_every: int,
+    lr: float,
+    gamma: float,
+    entropy: float,
+    hidden_dim: int,
+    hidden_layers: int,
+    skip_connection: bool,
+    model_root: Path,
+    load_path: Optional[str] = None,
+):
     global prev_policy
     device = "cpu" #torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Infer dimensions for encoders.
     # Conservative upper bounds: up to 4 players -> state/move dims below are adequate.
-    max_players = args.players if args.players > 0 else 4
+    max_players = players if players > 0 else 4
     state_dim = 97
     move_dim = len(MOVE_TYPES) + (max_players + 1) + 2  # type + offsetOH + (adrenaline_turn,self_flag)
 
-    policy = PolicyNet(state_dim=state_dim, move_dim=move_dim, hidden=args.hidden).to(device)
-    optimizer = optim.Adam(policy.parameters(), lr=args.lr)
+    policy = PolicyNet(
+        state_dim=state_dim,
+        move_dim=move_dim,
+        hidden_dim=hidden_dim,
+        hidden_layers=hidden_layers,
+        skip_connection=skip_connection,
+    ).to(device)
+    optimizer = optim.Adam(policy.parameters(), lr=lr)
 
-    if args.load:
-        print(f"Loading {args.load}...")
-        policy.load_state_dict(torch.load(args.load, map_location=device))
+    if load_path:
+        print(f"Loading {load_path}...")
+        policy.load_state_dict(torch.load(load_path, map_location=device))
     else:
         print("No loaded model; training from scratch. Models can be loaded with --load.")
     
     # Create engines: RL vs Dealer (default) or RL mirror self-play if desired.
     rl = RLEngine(playing_as=0, policy=policy, optimizer=optimizer,
-                  gamma=args.gamma, entropy_coef=args.entropy, train_mode=True)
+                  gamma=gamma, entropy_coef=entropy, train_mode=True)
     engines: List[AbstractEngine] = [rl]
-    for i in range(1, args.players):
-        if args.opponent == "dealer":
+    for i in range(1, max_players):
+        if opponent_type == "dealer":
             opponent: AbstractEngine = Dealer(playing_as=i)
-        elif args.opponent == "random":
+        elif opponent_type == "random":
             opponent = RandomEngine(playing_as=i)
         else:
             # Mirror self-play modes:
             # - shared: opponent uses the *same live* policy params (non-training)
             # - frozen: opponent is a deep-copied policy updated every --target-update episodes
-            if args.mirror_mode == "shared":
+            if mirror_mode == "shared":
                 opponent = RLEngine(playing_as=i, policy=policy, optimizer=optimizer,
-                                    gamma=args.gamma, entropy_coef=args.entropy, train_mode=False)
+                                    gamma=gamma, entropy_coef=entropy, train_mode=False)
             else:
                 opp_policy = copy.deepcopy(policy)
                 opponent = RLEngine(playing_as=i, policy=opp_policy,
                                     optimizer=optim.Adam(opp_policy.parameters(), lr=1e-5),
-                                    gamma=args.gamma, entropy_coef=args.entropy, train_mode=False)
+                                    gamma=gamma, entropy_coef=entropy, train_mode=False)
         engines.append(opponent)
 
     
+    checkpoint_dir = _checkpoint_directory(model_root, hidden_layers, hidden_dim, opponent_type)
+    checkpoint_schedule = _checkpoint_schedule(episodes)
 
     # Training loop over rounds.
     win = 0
-    for ep in range(1, args.episodes + 1):
-        player_count = args.players if args.players > 0 else random.randint(2, 4)
+    for ep in range(1, episodes + 1):
+        player_count = players if players > 0 else random.randint(2, 4)
         cfg = make_default_round(player_count=player_count)
         w = play_one_round(engines, trainer_idx=0, cfg=cfg)
         did_win = (w == 0)
@@ -545,16 +582,16 @@ def train(args: argparse.Namespace):
         rl.finish_round(did_win)
 
         # Periodically refresh frozen mirror with current learner weights
-        if args.opponent == "mirror" and args.mirror_mode == "frozen" and ep % max(1, args.target_update) == 0:
+        if opponent_type == "mirror" and mirror_mode == "frozen" and ep % max(1, target_update) == 0:
             for i in range(1, len(engines)):
                 if isinstance(engines[i], RLEngine):
                     engines[i].policy.load_state_dict(policy.state_dict())
-        if ep % max(1, args.target_update) == 0:
-            torch.save(policy.state_dict(), args.save)
-            print(f"Saved policy to {args.save}")
-        if ep % max(1, args.log_every) == 0:
+        while checkpoint_schedule and ep >= checkpoint_schedule[0]:
+            milestone = checkpoint_schedule.popleft()
+            _save_checkpoint(policy, checkpoint_dir, hidden_layers, hidden_dim, opponent_type, milestone)
+        if ep % max(1, log_every) == 0:
             pct = 100.0 * win / ep
-            print(f"[ep {ep:5d}] win%={pct:5.1f} (last {args.log_every}) vs {args.opponent}")
+            print(f"[ep {ep:5d}] win%={pct:5.1f} (last {log_every}) vs {opponent_type}")
             per_seat = seat_wr.win_rates()
             
             wr_avg = sum(x for x in per_seat if x == x) / 4.0  # mean of seats (NaNs guarded)
@@ -573,62 +610,76 @@ def train(args: argparse.Namespace):
             print("\tvalue_loss_MA={:.4f}{}".format(
                 value_ema.ma, "" if v_drift is None else " (Δ since last log={:+.4f})".format(v_drift)))
 
-    # Save the trained weights if requested.
-    if args.save:
-        torch.save(policy.state_dict(), args.save)
-        print(f"Saved policy to {args.save}")
-
 
 @torch.no_grad()
-def evaluate(args: argparse.Namespace):
+def evaluate(
+    *,
+    episodes: int,
+    players: int,
+    opponent: str,
+    mirror_mode: str,
+    gamma: float,
+    entropy: float,
+    hidden_dim: int,
+    hidden_layers: int,
+    skip_connection: bool,
+    load_path: Optional[str] = None,
+):
     global prev_policy
     device = "cpu" #torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    max_players = args.players if args.players > 0 else 4
+    max_players = players if players > 0 else 4
     state_dim = 97
     move_dim = len(MOVE_TYPES) + (max_players + 1) + 2
 
-    policy = PolicyNet(state_dim=state_dim, move_dim=move_dim, hidden=args.hidden).to(device)
-    if args.load:
-        print(f"Loading {args.load}...")
-        policy.load_state_dict(torch.load(args.load, map_location=device))
+    policy = PolicyNet(
+        state_dim=state_dim,
+        move_dim=move_dim,
+        hidden_dim=hidden_dim,
+        hidden_layers=hidden_layers,
+        skip_connection=skip_connection,
+    ).to(device)
+    if load_path:
+        print(f"Loading {load_path}...")
+        policy.load_state_dict(torch.load(load_path, map_location=device))
     else:
         print("Warning: No loaded model. Models can be loaded with --load.")
 
-    rl = RLEngine(playing_as=0, policy=policy, optimizer=optim.Adam(policy.parameters(), lr=1e-5),
-                  gamma=args.gamma, entropy_coef=args.entropy, train_mode=False)
+    eval_optimizer = optim.Adam(policy.parameters(), lr=1e-5)
+    rl = RLEngine(playing_as=0, policy=policy, optimizer=eval_optimizer,
+                  gamma=gamma, entropy_coef=entropy, train_mode=False)
     engines: List[AbstractEngine] = [rl]
-    for i in range(1, args.players):
-        if args.opponent == "dealer":
+    for i in range(1, max_players):
+        if opponent == "dealer":
             opponent: AbstractEngine = Dealer(playing_as=i)
-        elif args.opponent == "random":
+        elif opponent == "random":
             opponent = RandomEngine(playing_as=i)
         else:
             # Mirror self-play modes:
             # - shared: opponent uses the *same live* policy params (non-training)
             # - frozen: opponent is a deep-copied policy updated every --target-update episodes
-            if args.mirror_mode == "shared":
-                opponent = RLEngine(playing_as=i, policy=policy, optimizer=optimizer,
-                                    gamma=args.gamma, entropy_coef=args.entropy, train_mode=False)
+            if mirror_mode == "shared":
+                opponent = RLEngine(playing_as=i, policy=policy, optimizer=eval_optimizer,
+                                    gamma=gamma, entropy_coef=entropy, train_mode=False)
             else:
                 opp_policy = copy.deepcopy(policy)
                 opponent = RLEngine(playing_as=i, policy=opp_policy,
                                     optimizer=optim.Adam(opp_policy.parameters(), lr=1e-5),
-                                    gamma=args.gamma, entropy_coef=args.entropy, train_mode=False)
+                                    gamma=gamma, entropy_coef=entropy, train_mode=False)
         engines.append(opponent)
     
 
     win = 0
-    for ep in trange(1, args.episodes + 1, desc="Running Episodes", leave=False):
-        player_count = args.players if args.players > 0 else random.randint(2, 4)
+    for ep in range(1, episodes + 1):
+        player_count = players if players > 0 else random.randint(2, 4)
         cfg = make_default_round(player_count=player_count)
         w = play_one_round(engines, trainer_idx=0, cfg=cfg)
         did_win = (w == 0)
         if did_win:
             win += 1
 
-    pct = 100.0 * win / args.episodes
-    print(f"Eval: {win}/{args.episodes} wins ({pct:.1f}%) vs {args.opponent}")
+    pct = 100.0 * win / episodes
+    print(f"Eval: {win}/{episodes} wins ({pct:.1f}%) vs {opponent}")
     
     per_seat = seat_wr.win_rates()
     wr_avg = sum(x for x in per_seat if x == x) / 4.0  # mean of seats (NaNs guarded)
@@ -654,13 +705,17 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Policy-gradient training for Buckshot Roulette")
     p.add_argument("--episodes", type=int, default=1000, help="number of rounds to train/evaluate")
     p.add_argument("--players", type=int, default=4, choices=[-1, 2,3,4], help="number of players in a round")
-    p.add_argument("--hidden", type=int, default=128, help="hidden size for encoders")
+    p.add_argument("--hidden", "--hidden-dim", dest="hidden_dim", type=int, default=128,
+                   help="hidden layer width for the policy/value encoders")
+    p.add_argument("--hidden-layers", type=int, default=2, help="number of hidden layers in the MLP towers")
+    p.add_argument("--skip-connection", action="store_true",
+                   help="concatenate raw inputs with the final hidden layer before scoring moves")
     p.add_argument("--lr", type=float, default=3e-4, help="learning rate")
     p.add_argument("--gamma", type=float, default=0.99, help="discount factor")
     p.add_argument("--entropy", type=float, default=0.01, help="entropy bonus coefficient")
     p.add_argument("--log-every", dest="log_every", type=int, default=200)
     p.add_argument("--opponent", type=str, default="dealer", choices=["dealer", "random", "mirror"], help="opponent type")
-    p.add_argument("--save", type=str, default=None, help="path to save policy weights after training")
+    p.add_argument("--model-root", type=str, default="models", help="directory to store auto-named model checkpoints")
     p.add_argument("--load", type=str, default=None, help="path to load policy weights for evaluation")
     p.add_argument("--eval", action="store_true", help="run evaluation only")
     p.add_argument("--mirror-mode", type=str, default="frozen", choices=["shared","frozen"],
@@ -671,10 +726,29 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
+    model_root = Path(args.model_root)
+    shared_kwargs = dict(
+        players=args.players,
+        opponent_type=args.opponent,
+        mirror_mode=args.mirror_mode,
+        gamma=args.gamma,
+        entropy=args.entropy,
+        hidden_dim=args.hidden_dim,
+        hidden_layers=args.hidden_layers,
+        skip_connection=args.skip_connection,
+        load_path=args.load,
+    )
     if args.eval:
-        evaluate(args)
+        evaluate(episodes=args.episodes, **shared_kwargs)
     else:
-        train(args)
+        train(
+            episodes=args.episodes,
+            target_update=args.target_update,
+            log_every=args.log_every,
+            lr=args.lr,
+            model_root=model_root,
+            **shared_kwargs,
+        )
 
 
 if __name__ == "__main__":

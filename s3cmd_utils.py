@@ -302,7 +302,7 @@ def sync_prefix_to_path(
     dest_arg = str(destination)
     if not dest_arg.endswith("/"):
         dest_arg += "/"
-    _run_s3cmd(["sync", remote, str(destination)], config, quiet=quiet)
+    _run_s3cmd(["sync", remote, dest_arg], config, quiet=quiet)
     if not quiet:
         pretty = trimmed or "."
         print(f"[S3] Synced {remote} -> {destination} (prefix '{pretty}')")

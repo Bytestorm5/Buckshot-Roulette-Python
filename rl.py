@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import copy
 import math
 import random
 from collections import deque
@@ -10,7 +11,6 @@ from typing import Deque, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import copy
 
 from tqdm import trange
 
@@ -24,6 +24,7 @@ from buckshot_roulette.multiplayer.game import (
 )
 from buckshot_roulette.multiplayer.ai import AbstractEngine, Dealer, Random as RandomEngine
 from rl_metrics_overlay import SeatWRTracker, LogitDriftProbe, ValueLossEMA, format_seat_wr
+from s3cmd_utils import ensure_local_file, upload_file_to_s3
 
 seat_wr = SeatWRTracker(num_seats=4)
 logit_probe = LogitDriftProbe(buffer_size=2048, device="cpu")  # or "cuda" if you prefer
@@ -495,11 +496,60 @@ def _checkpoint_directory(model_root: Path, hidden_layers: int, hidden_dim: int,
     return folder
 
 
-def _save_checkpoint(policy: PolicyNet, directory: Path, hidden_layers: int, hidden_dim: int, opponent: str, episode: int) -> None:
+def _candidate_checkpoint_paths(load_path: str, model_root: Path) -> List[Path]:
+    raw = Path(load_path).expanduser()
+    candidates: List[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append(Path.cwd() / raw)
+        if model_root is not None:
+            if raw.parts and raw.parts[0] == model_root.name:
+                stripped = Path(*raw.parts[1:]) if len(raw.parts) > 1 else Path(".")
+                candidates.append(model_root / stripped)
+            else:
+                candidates.append(model_root / raw)
+    normalized: List[Path] = []
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized.append(resolved)
+    return normalized
+
+
+def _resolve_checkpoint_path(load_path: str, model_root: Path) -> Path:
+    candidates = _candidate_checkpoint_paths(load_path, model_root)
+    attempts: List[str] = []
+    for candidate in candidates:
+        attempts.append(str(candidate))
+        if candidate.exists():
+            return candidate
+        downloaded = ensure_local_file(candidate, relative_to=model_root, quiet=False)
+        if downloaded and candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"Checkpoint '{load_path}' not found locally or via S3. Tried: {', '.join(attempts)}"
+    )
+
+
+def _save_checkpoint(
+    policy: PolicyNet,
+    directory: Path,
+    hidden_layers: int,
+    hidden_dim: int,
+    opponent: str,
+    episode: int,
+    model_root: Path,
+) -> Path:
     name = f"model_{hidden_layers}_{hidden_dim}_{opponent}_{episode}.pt"
     path = directory / name
     torch.save(policy.state_dict(), path)
+    upload_file_to_s3(path, relative_to=model_root, quiet=True)
     print(f"Saved checkpoint to {path}")
+    return path
 
 
 def train(
@@ -520,6 +570,7 @@ def train(
     load_path: Optional[str] = None,
 ):
     global prev_policy
+    model_root = Path(model_root).expanduser().resolve()
     device = "cpu" #torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Infer dimensions for encoders.
@@ -538,8 +589,9 @@ def train(
     optimizer = optim.Adam(policy.parameters(), lr=lr)
 
     if load_path:
-        print(f"Loading {load_path}...")
-        policy.load_state_dict(torch.load(load_path, map_location=device))
+        resolved_load = _resolve_checkpoint_path(load_path, model_root)
+        print(f"Loading {resolved_load}...")
+        policy.load_state_dict(torch.load(resolved_load, map_location=device))
     else:
         print("No loaded model; training from scratch. Models can be loaded with --load.")
     
@@ -588,7 +640,15 @@ def train(
                     engines[i].policy.load_state_dict(policy.state_dict())
         while checkpoint_schedule and ep >= checkpoint_schedule[0]:
             milestone = checkpoint_schedule.popleft()
-            _save_checkpoint(policy, checkpoint_dir, hidden_layers, hidden_dim, opponent_type, milestone)
+            _save_checkpoint(
+                policy,
+                checkpoint_dir,
+                hidden_layers,
+                hidden_dim,
+                opponent_type,
+                milestone,
+                model_root,
+            )
         if ep % max(1, log_every) == 0:
             pct = 100.0 * win / ep
             print(f"[ep {ep:5d}] win%={pct:5.1f} (last {log_every}) vs {opponent_type}")
@@ -616,16 +676,18 @@ def evaluate(
     *,
     episodes: int,
     players: int,
-    opponent: str,
+    opponent_type: str,
     mirror_mode: str,
     gamma: float,
     entropy: float,
     hidden_dim: int,
     hidden_layers: int,
     skip_connection: bool,
+    model_root: Path,
     load_path: Optional[str] = None,
 ):
     global prev_policy
+    model_root = Path(model_root).expanduser().resolve()
     device = "cpu" #torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     max_players = players if players > 0 else 4
@@ -640,8 +702,9 @@ def evaluate(
         skip_connection=skip_connection,
     ).to(device)
     if load_path:
-        print(f"Loading {load_path}...")
-        policy.load_state_dict(torch.load(load_path, map_location=device))
+        resolved_load = _resolve_checkpoint_path(load_path, model_root)
+        print(f"Loading {resolved_load}...")
+        policy.load_state_dict(torch.load(resolved_load, map_location=device))
     else:
         print("Warning: No loaded model. Models can be loaded with --load.")
 
@@ -650,9 +713,9 @@ def evaluate(
                   gamma=gamma, entropy_coef=entropy, train_mode=False)
     engines: List[AbstractEngine] = [rl]
     for i in range(1, max_players):
-        if opponent == "dealer":
+        if opponent_type == "dealer":
             opponent: AbstractEngine = Dealer(playing_as=i)
-        elif opponent == "random":
+        elif opponent_type == "random":
             opponent = RandomEngine(playing_as=i)
         else:
             # Mirror self-play modes:
@@ -679,7 +742,7 @@ def evaluate(
             win += 1
 
     pct = 100.0 * win / episodes
-    print(f"Eval: {win}/{episodes} wins ({pct:.1f}%) vs {opponent}")
+    print(f"Eval: {win}/{episodes} wins ({pct:.1f}%) vs {opponent_type}")
     
     per_seat = seat_wr.win_rates()
     wr_avg = sum(x for x in per_seat if x == x) / 4.0  # mean of seats (NaNs guarded)
@@ -726,7 +789,7 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    model_root = Path(args.model_root)
+    model_root = Path(args.model_root).expanduser().resolve()
     shared_kwargs = dict(
         players=args.players,
         opponent_type=args.opponent,
@@ -736,6 +799,7 @@ def main():
         hidden_dim=args.hidden_dim,
         hidden_layers=args.hidden_layers,
         skip_connection=args.skip_connection,
+        model_root=model_root,
         load_path=args.load,
     )
     if args.eval:
@@ -746,7 +810,6 @@ def main():
             target_update=args.target_update,
             log_every=args.log_every,
             lr=args.lr,
-            model_root=model_root,
             **shared_kwargs,
         )
 

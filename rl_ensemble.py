@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import csv
 import json
+import os
 import random
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -29,6 +30,7 @@ from buckshot_roulette.multiplayer.game import Items, RoundConfig, SequenceConfi
 
 import rl
 from rl import MOVE_TYPES, PolicyNet, RLEngine, play_one_round
+from s3cmd_utils import ensure_local_file, sync_bucket_to_path, sync_folder_from_s3, upload_file_to_s3
 
 
 # --------------------------- Manual Configuration --------------------------- #
@@ -70,6 +72,7 @@ class ArchitectureSpec:
 @dataclass(eq=False)
 class ModelCheckpoint:
     path: Path
+    model_root: Path
     spec: ArchitectureSpec
     opponent: str
     steps: int
@@ -108,7 +111,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manual-only", action="store_true", help="disable automatic architecture sampling")
     parser.add_argument("--eval-scope", type=str, nargs="*", default=None,
                         help="limit evaluation scopes (subfolder/global); default runs both")
-    parser.add_argument("--max-workers", type=int, default=16, help="maximum concurrent workers for async tasks")
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=os.cpu_count() or 16,
+        help="maximum concurrent workers for async tasks (defaults to CPU cores)",
+    )
     return parser.parse_args()
 
 
@@ -258,12 +266,16 @@ def latest_checkpoint_info(folder: Path) -> Tuple[Optional[Path], int]:
     return best_paths[-1], best_step
 
 
-def ensure_metadata(folder: Path, spec: ArchitectureSpec, players: int) -> Dict[str, Any]:
+def ensure_metadata(folder: Path, spec: ArchitectureSpec, players: int, model_root: Optional[Path] = None) -> Dict[str, Any]:
     folder.mkdir(parents=True, exist_ok=True)
     meta_path = folder / "metadata.json"
     existing: Dict[str, Any] = {}
     if meta_path.exists():
         existing = json.loads(meta_path.read_text())
+    else:
+        ensure_local_file(meta_path, relative_to=model_root, quiet=True)
+        if meta_path.exists():
+            existing = json.loads(meta_path.read_text())
     merged = {
         "hidden_layers": spec.hidden_layers,
         "hidden_dim": spec.hidden_dim,
@@ -274,6 +286,7 @@ def ensure_metadata(folder: Path, spec: ArchitectureSpec, players: int) -> Dict[
     }
     existing.update({k: v for k, v in merged.items() if v is not None})
     meta_path.write_text(json.dumps(existing, indent=2))
+    upload_file_to_s3(meta_path, relative_to=model_root, quiet=True)
     return existing
 
 
@@ -289,7 +302,9 @@ def train_stage(
     if episodes <= 0:
         return []
     folder = checkpoint_dir(args.model_root, spec, opponent)
-    ensure_metadata(folder, spec, args.players)
+    folder.mkdir(parents=True, exist_ok=True)
+    sync_folder_from_s3(folder, relative_to=args.model_root, quiet=True)
+    ensure_metadata(folder, spec, args.players, model_root=args.model_root)
     existing_checkpoint, completed_episodes = latest_checkpoint_info(folder)
     remaining = max(0, episodes - completed_episodes)
     before = snapshot_checkpoints(folder)
@@ -343,12 +358,14 @@ def train_stage(
             dst = folder / new_name
             if dst != src:
                 src.rename(dst)
+            upload_file_to_s3(dst, relative_to=args.model_root, quiet=True)
             new_file_entries.append((new_name, absolute_step))
     metadata = json.loads((folder / "metadata.json").read_text())
     for name, steps in new_file_entries:
         path = folder / name
         record = ModelCheckpoint(
             path=path,
+            model_root=args.model_root,
             spec=spec,
             opponent=opponent,
             steps=steps,
@@ -361,6 +378,7 @@ def train_stage(
             records.append(
                 ModelCheckpoint(
                     path=path,
+                    model_root=args.model_root,
                     spec=spec,
                     opponent=opponent,
                     steps=parse_training_steps(path.name),
@@ -394,6 +412,8 @@ def train_architecture(
         )
     )
     random_folder = checkpoint_dir(args.model_root, spec, "random")
+    random_folder.mkdir(parents=True, exist_ok=True)
+    sync_folder_from_s3(random_folder, relative_to=args.model_root, quiet=True)
     warm_start = latest_checkpoint_path(random_folder, rng)
     records.extend(
         train_stage(
@@ -462,6 +482,7 @@ def build_policy(spec: ArchitectureSpec, players: int) -> PolicyNet:
 
 
 def load_policy_state(record: ModelCheckpoint) -> Dict[str, torch.Tensor]:
+    ensure_local_file(record.path, relative_to=record.model_root, quiet=False)
     return torch.load(record.path, map_location="cpu")
 
 
@@ -644,6 +665,7 @@ def gather_checkpoints(model_root: Path, default_players: int) -> List[ModelChec
             records.append(
                 ModelCheckpoint(
                     path=ckpt,
+                    model_root=model_root,
                     spec=spec,
                     opponent=opponent,
                     steps=parse_training_steps(ckpt.name),
@@ -774,6 +796,8 @@ def plot_param_vs_elo(rows: List[Dict[str, Any]], plot_path: Path) -> None:
 
 async def async_main() -> None:
     args = parse_args()
+    args.model_root = args.model_root.expanduser().resolve()
+    sync_bucket_to_path(args.model_root, quiet=False)
     rng = random.Random(args.seed)
     round_kwargs = load_round_config_overrides(args.round_config)
     specs = generate_architectures(rng, args.auto_architectures, args.manual_only)

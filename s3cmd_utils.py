@@ -299,6 +299,9 @@ def sync_prefix_to_path(
         remote = f"{remote}/"
     destination = Path(local_path)
     destination.mkdir(parents=True, exist_ok=True)
+    dest_arg = str(destination)
+    if not dest_arg.endswith("/"):
+        dest_arg += "/"
     _run_s3cmd(["sync", remote, str(destination)], config, quiet=quiet)
     if not quiet:
         pretty = trimmed or "."
